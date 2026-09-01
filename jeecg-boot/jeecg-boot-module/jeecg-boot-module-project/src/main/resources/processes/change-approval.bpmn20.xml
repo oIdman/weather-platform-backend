@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             typeLanguage="http://www.w3.org/2001/XMLSchema"
+             expressionLanguage="http://www.w3.org/1999/XPath"
+             targetNamespace="http://www.jeecg.org/mrp">
+  <process id="changeApproval" name="项目变更审批" isExecutable="true">
+    <startEvent id="start" name="开始"/>
+    <sequenceFlow id="flow1" sourceRef="start" targetRef="firstApprove"/>
+    <userTask id="firstApprove" name="一级审批" flowable:assignee="admin"/>
+    <sequenceFlow id="flow2" sourceRef="firstApprove" targetRef="gateway1"/>
+    <exclusiveGateway id="gateway1" name="一级结论"/>
+    <sequenceFlow id="flow3" sourceRef="gateway1" targetRef="rejected">
+      <conditionExpression xsi:type="tFormalExpression">${pass == false}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow4" sourceRef="gateway1" targetRef="secondApprove">
+      <conditionExpression xsi:type="tFormalExpression">${pass == true &amp;&amp; impactLevel == 'high'}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow5" sourceRef="gateway1" targetRef="approved">
+      <conditionExpression xsi:type="tFormalExpression">${pass == true &amp;&amp; impactLevel != 'high'}</conditionExpression>
+    </sequenceFlow>
+    <userTask id="secondApprove" name="二级审批（高风险）" flowable:assignee="admin"/>
+    <sequenceFlow id="flow6" sourceRef="secondApprove" targetRef="gateway2"/>
+    <exclusiveGateway id="gateway2" name="二级结论"/>
+    <sequenceFlow id="flow7" sourceRef="gateway2" targetRef="approved">
+      <conditionExpression xsi:type="tFormalExpression">${pass == true}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow8" sourceRef="gateway2" targetRef="rejected">
+      <conditionExpression xsi:type="tFormalExpression">${pass == false}</conditionExpression>
+    </sequenceFlow>
+    <endEvent id="approved" name="变更通过"/>
+    <endEvent id="rejected" name="变更拒绝"/>
+  </process>
+</definitions>

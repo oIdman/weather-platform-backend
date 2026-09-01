@@ -37,6 +37,8 @@ AI/RAG 功能还可能需要 PostgreSQL/pgvector、MongoDB 和模型 API Key；�
 2. 启动 Redis。
 3. 在本地专用配置中设置数据库和 Redis 连接，不要提交真实密码。
 
+开发 profile 启用 Flyway 时会执行气象科研业务增量脚本，创建 `mrp_*` 表和业务字典。Flowable 使用同一主数据源维护 `ACT_*` 流程表；从旧 Activiti 数据库升级时不能直接把旧 `ACT_*` 表当作 Flowable 8 表使用，应先备份并单独制定流程实例迁移方案。
+
 主要配置文件：
 
 ```text
@@ -124,6 +126,12 @@ mvn -f jeecg-boot/pom.xml -Pdev test
 
 # 构建单体启动模块及依赖
 mvn -f jeecg-boot/pom.xml -Pdev -pl jeecg-module-system/jeecg-system-start -am package
+
+# 编译气象科研业务模块
+mvn -f jeecg-boot/pom.xml -Pdev -pl jeecg-boot-module/jeecg-boot-module-project -am compile -DskipTests
+
+# 校验迁移后的 5 个 Flowable BPMN 模型（dev profile 默认跳过测试，需显式开启）
+mvn -f jeecg-boot/pom.xml -Pdev -pl jeecg-boot-module/jeecg-boot-module-project -am test -Dmaven.test.skip=false -DskipTests=false -Dtest=MrpFlowableProcessTest -Dsurefire.failIfNoSpecifiedTests=false
 
 # 指定测试
 mvn -f jeecg-boot/pom.xml -Pdev -Dtest=ClassNameTest test

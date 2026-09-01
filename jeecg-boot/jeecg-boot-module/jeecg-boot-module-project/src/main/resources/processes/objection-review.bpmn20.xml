@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             typeLanguage="http://www.w3.org/2001/XMLSchema"
+             expressionLanguage="http://www.w3.org/1999/XPath"
+             targetNamespace="http://www.jeecg.org/mrp">
+  <process id="objectionReview" name="立项异议核查" isExecutable="true">
+    <startEvent id="start" name="开始"/>
+    <sequenceFlow id="flow1" sourceRef="start" targetRef="check"/>
+    <userTask id="check" name="异议核查" flowable:assignee="admin"/>
+    <sequenceFlow id="flow2" sourceRef="check" targetRef="gateway"/>
+    <exclusiveGateway id="gateway" name="核查结论"/>
+    <sequenceFlow id="flow3" sourceRef="gateway" targetRef="established">
+      <conditionExpression xsi:type="tFormalExpression">${pass == true}</conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow4" sourceRef="gateway" targetRef="notEstablished">
+      <conditionExpression xsi:type="tFormalExpression">${pass == false}</conditionExpression>
+    </sequenceFlow>
+    <endEvent id="established" name="异议成立"/>
+    <endEvent id="notEstablished" name="异议不成立"/>
+  </process>
+</definitions>

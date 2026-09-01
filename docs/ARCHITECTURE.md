@@ -36,6 +36,7 @@
 | 后端 | Spring Boot 4.1.0、Spring Cloud 2025.1.2、Spring Cloud Alibaba 2025.1.0.0 |
 | 持久层 | MyBatis-Plus 3.5.16、Druid、dynamic-datasource |
 | 认证授权 | Apache Shiro 3.0、JWT 4.5、Redis |
+| 业务工作流 | Flowable 8.0.0（由旧 Activiti 5.22 流程迁移） |
 | 前端 | Vue 3.5、TypeScript 5.9、Vite 8、Ant Design Vue 4、Pinia 3 |
 | 数据库 | 默认 MySQL 脚本；支持 PostgreSQL、Oracle、SQL Server、MariaDB、达梦、人大金仓等适配 |
 | 部署 | Maven、pnpm、Docker/Docker Compose、Nginx |
@@ -55,6 +56,7 @@ jeecg-boot/
 │  ├─ jeecg-system-biz/            用户、角色、菜单、字典等系统业务
 │  └─ jeecg-system-start/          单体启动与环境配置
 ├─ jeecg-boot-module/              业务、Demo、AI/低代码扩展模块
+│  └─ jeecg-boot-module-project/   气象科研管理业务与 Flowable BPMN
 ├─ jeecg-server-cloud/
 │  ├─ jeecg-cloud-nacos/           注册/配置中心
 │  ├─ jeecg-cloud-gateway/         API 网关
@@ -70,7 +72,8 @@ jeecg-boot/
 - `*-api` 定义跨模块/跨服务契约，`*-biz` 实现业务；启动模块只装配配置和依赖。
 - 单体与微服务通过 local API/Feign API 适配，不应在业务层散落运行形态判断。
 - 新业务优先成为 `jeecg-boot-module` 下独立模块，确需独立部署时再增加 cloud start。
-- 当前可见的 `weather` 目录没有非构建产物源码，是预留结构而非已实现业务模块。
+- 气象科研管理业务位于 `org.jeecg.modules.project`，接口统一使用 `/project/**`；单体启动模块通过 Maven 依赖装配该业务模块。
+- 业务主链路为指南→申报→审查→立项→执行→验收→归档。异议核查、中检、变更和验收审批使用 Flowable，其他状态流转由领域 Service 管理。
 
 ### 前端
 
@@ -115,6 +118,7 @@ jeecgboot-vue3/
 
 - 初始 MySQL 数据位于 `jeecg-boot/db/jeecgboot-mysql-5.7.sql`。
 - 增量迁移位于 `jeecg-module-system/jeecg-system-start/src/main/resources/flyway/sql/mysql/`。
+- 气象科研业务表与字典由 `V20260901_1__weather_research_project.sql` 初始化；该脚本按旧系统 Phase 0-7 的顺序合并，仅适用于 MySQL。
 - 已发布迁移视为不可变；变更数据库结构时新增唯一版本脚本。
 - 官方说明：切换非 MySQL 数据库时，需要评估并通常关闭默认 MySQL Flyway 流程，再使用对应转换脚本/适配配置。
 - 支持多数据源不代表任意 SQL 安全；动态数据源、Online 表单和自定义 SQL 都必须受权限和输入边界约束。

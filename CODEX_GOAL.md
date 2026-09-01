@@ -11,7 +11,7 @@
 - 前端：Vue 3.5、TypeScript、Vite 8、Ant Design Vue 4、Pinia、pnpm。
 - 运行形态：单体模式是本地开发的默认路径；仓库同时提供 Nacos、Gateway 等微服务模块和 Docker Compose 编排。
 - 数据设施：MySQL 与 Redis 为基础依赖；AI 场景还可能需要 pgvector、模型凭据等可选设施。
-- 业务状态：仓库目前主要是上游平台基线。存在 `weather` 命名的预留目录，但没有可提交的业务源码，不得据此假设天气系统需求已完成或已确定。
+- 业务状态：仓库已接入 `jeecg-boot-module-project` 气象科研管理业务模块，覆盖指南、申报、审查、立项、执行、验收和归档主链路；经费、成果、真实 AI 与外部系统对接仍不在当前实现范围。
 
 ## Agent 的完成标准
 
