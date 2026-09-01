@@ -63,6 +63,14 @@ public interface ISysPermissionService extends IService<SysPermission> {
      * @return
      */
 	public List<SysPermission> queryByUser(String username);
+
+	/**
+	 * 查询用户菜单列表并补全父级菜单
+	 * 解决角色只授权子级菜单（未授权父级菜单）时，左侧菜单无法展示的问题
+	 * @param permissionList 用户已授权的权限集合
+	 * @return 补全父级菜单后的菜单列表
+	 */
+	public List<SysPermission> queryMenuListWithParent(List<SysPermission> permissionList);
 	
 	/**
 	 * 根据permissionId删除其关联的SysPermissionDataRule表中的数据

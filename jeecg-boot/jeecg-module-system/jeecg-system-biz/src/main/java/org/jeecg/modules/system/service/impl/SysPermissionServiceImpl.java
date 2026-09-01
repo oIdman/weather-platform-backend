@@ -267,6 +267,52 @@ public class SysPermissionServiceImpl extends ServiceImpl<SysPermissionMapper, S
 		return permissionList;
 	}
 
+	@Override
+	public List<SysPermission> queryMenuListWithParent(List<SysPermission> permissionList) {
+		if (permissionList == null || permissionList.isEmpty()) {
+			return permissionList;
+		}
+		List<SysPermission> menuList = new ArrayList<>(permissionList);
+		// 已存在的菜单id，用于去重和防止死循环
+		Set<String> existIdSet = new HashSet<>();
+		for (SysPermission permission : menuList) {
+			existIdSet.add(permission.getId());
+		}
+		// 待补全的父级菜单id
+		Set<String> parentIdSet = new HashSet<>();
+		for (SysPermission permission : menuList) {
+			// 只补全菜单（一级/子菜单）的父级，按钮权限不参与左侧菜单树构建
+			if ((CommonConstant.MENU_TYPE_0.equals(permission.getMenuType()) || CommonConstant.MENU_TYPE_1.equals(permission.getMenuType()))
+					&& oConvertUtils.isNotEmpty(permission.getParentId())) {
+				parentIdSet.add(permission.getParentId());
+			}
+		}
+		while (!parentIdSet.isEmpty()) {
+			// 过滤掉已经存在的菜单，只查询缺失的父级菜单
+			parentIdSet.removeAll(existIdSet);
+			if (parentIdSet.isEmpty()) {
+				break;
+			}
+			List<SysPermission> parentList = this.list(new LambdaQueryWrapper<SysPermission>()
+					.in(SysPermission::getId, parentIdSet)
+					.eq(SysPermission::getDelFlag, CommonConstant.DEL_FLAG_0));
+			if (parentList == null || parentList.isEmpty()) {
+				break;
+			}
+			menuList.addAll(parentList);
+			// 上级菜单可能还有上级（三级菜单场景），继续向上补全
+			Set<String> nextParentIdSet = new HashSet<>();
+			for (SysPermission parent : parentList) {
+				existIdSet.add(parent.getId());
+				if (oConvertUtils.isNotEmpty(parent.getParentId())) {
+					nextParentIdSet.add(parent.getParentId());
+				}
+			}
+			parentIdSet = nextParentIdSet;
+		}
+		return menuList;
+	}
+
 	/**
 	 * 根据permissionId删除其关联的SysPermissionDataRule表中的数据
 	 */

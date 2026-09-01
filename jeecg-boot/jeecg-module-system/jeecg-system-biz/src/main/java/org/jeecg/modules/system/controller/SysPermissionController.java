@@ -309,7 +309,8 @@ public class SysPermissionController {
 
 			JSONObject json = new JSONObject();
 			JSONArray menujsonArray = new JSONArray();
-			this.getPermissionJsonArray(menujsonArray, metaList, null);
+			// 代码逻辑说明: 角色只授权部分子级菜单（未授权父级）时，补全父级菜单，保证左侧菜单正常展示
+			this.getPermissionJsonArray(menujsonArray, sysPermissionService.queryMenuListWithParent(metaList), null);
 			//一级菜单下的子菜单全部是隐藏路由，则一级菜单不显示
 			this.handleFirstLevelMenuHidden(menujsonArray);
 
