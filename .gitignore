@@ -3,6 +3,11 @@
 *.iml
 rebel.xml
 
+## opencode
+**/.omo
+**/.codegraph
+**/.opencode
+
 ## backend
 **/target
 **/logs
