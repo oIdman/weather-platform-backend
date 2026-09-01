@@ -62,7 +62,7 @@ img {
 }
 
 body {
-  background: #e3f0ff;
+  background: #f4f7fb;
   color: #666;
 }
 
@@ -358,8 +358,12 @@ a {
 }
 
 .login-background-img {
-  background-image: url(../icon/jeecg_bg.png);
-  background-size: cover;
+  background-color: #081c3d;
+  background-image: radial-gradient(circle at 18% 22%, rgba(52, 130, 255, 0.22), transparent 45%),
+    radial-gradient(circle at 82% 78%, rgba(45, 212, 191, 0.16), transparent 42%),
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: auto, auto, 48px 48px, 48px 48px;
   background-position: top center;
-  background-repeat: no-repeat;
+  background-repeat: no-repeat, no-repeat, repeat, repeat;
 }

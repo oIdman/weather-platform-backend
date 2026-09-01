@@ -16,11 +16,7 @@
       <div class="aui-content">
         <div class="aui-container">
           <div class="aui-form">
-            <div class="aui-image">
-              <div class="aui-image-text">
-                <img :src="adTextImg" />
-              </div>
-            </div>
+            <MiniLoginAside />
             <div class="aui-formBox">
               <div class="aui-formWell">
                 <div class="aui-flex aui-form-nav investment_title">
@@ -31,7 +27,7 @@
                     >{{ t('sys.login.mobileSignInFormTitle') }}
                   </div>
                 </div>
-                <div class="aui-form-box" style="height: 240px">
+                <div class="aui-form-box" style="height: 210px">
                   <a-form ref="loginRef" :model="formData" v-if="activeIndex === 'accountLogin'" @keyup.enter.native="loginHandleClick">
                     <div class="aui-account">
                       <div class="aui-inputClear">
@@ -185,8 +181,8 @@
   const MiniForgotpad = defineAsyncComponent(() => import('./MiniForgotpad.vue'));
   const MiniRegister = defineAsyncComponent(() => import('./MiniRegister.vue'));
   const MiniCodelogin = defineAsyncComponent(() => import('./MiniCodelogin.vue'));
-  import logoImg from '/@/assets/loginmini/icon/jeecg_logo.png';
-  import adTextImg from '/@/assets/loginmini/icon/jeecg_ad_text.png';
+  import logoImg from '/@/assets/images/logo.png';
+  import MiniLoginAside from './MiniLoginAside.vue';
   import { AppLocalePicker, AppDarkModeToggle } from '/@/components/Application';
   import { useLocaleStore } from '/@/store/modules/locale';
   import { createLocalStorage } from '/@/utils/cache';
@@ -586,16 +582,16 @@
     position: relative;
     z-index: 3;
     background: #ffffff;
-    color: #1573e9;
+    color: #1273d6;
     border-radius: 100px;
     padding: 5px 16px;
     margin: 7px;
-    border: 1px solid #1573e9;
+    border: 1px solid #1273d6;
     top: 12px;
   }
 
   .aui-get-code:hover {
-    color: #1573e9;
+    color: #1273d6;
   }
 
   .code-shape {
@@ -612,17 +608,29 @@
     padding: 10px 15px;
     font-size: 14px;
     border-radius: 8px;
-    margin-top: 15px;
+    margin-top: 10px;
     margin-bottom: 8px;
     flex: 1;
     color: #fff;
+    background: linear-gradient(90deg, #0b3d91 0%, #1273d6 100%);
+    border: none;
+    box-shadow: 0 8px 18px rgba(18, 115, 214, 0.28);
   }
   .aui-phone-logo{
     position: absolute;
     margin-left: 10px;
-    width: 60px;
-    top:2px;
+    width: 52px;
+    top: 8px;
     z-index: 4;
+  }
+  .aui-phone-logo img{
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 4px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 6px 18px rgba(4, 25, 60, 0.35);
   }
   .top-3{
     top: 0.45rem;
@@ -638,22 +646,31 @@
 
 <style lang="less">
 @prefix-cls: ~'@{namespace}-mini-login';
-@dark-bg: #293146;
+@dark-bg: #0f1b33;
 
 html[data-theme='dark'] {
   .@{prefix-cls} {
     background-color: @dark-bg !important;
-    background-image: none;
+    background-image: radial-gradient(circle at 18% 22%, rgba(52, 130, 255, 0.18), transparent 45%),
+      radial-gradient(circle at 82% 78%, rgba(45, 212, 191, 0.12), transparent 42%),
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: auto, auto, 48px 48px, 48px 48px;
 
     &::before {
-      background-image: url(/@/assets/svg/login-bg-dark.svg);
+      display: none;
     }
     .aui-inputClear{
-      background-color: #232a3b !important;
+      background-color: #16233a !important;
+      border-color: #2a3b57 !important;
+    }
+    .aui-input-line {
+      background-color: #16233a !important;
+      border-color: #2a3b57 !important;
     }
     .ant-input,
     .ant-input-password {
-      background-color: #232a3b !important;
+      background-color: #16233a !important;
     }
 
     .ant-btn:not(.ant-btn-link):not(.ant-btn-primary) {
@@ -682,8 +699,13 @@ html[data-theme='dark'] {
     }
 
     .aui-formButton .aui-linek-code{
-      background:  @dark-bg !important;
-      color: white !important;
+      background: #101b2e !important;
+      color: #e6edf7 !important;
+    }
+    .aui-get-code{
+      background: #16233a !important;
+      border-color: #1273d6 !important;
+      color: #6fb4ff !important;
     }
     .aui-code-line{
       border-left: none !important;
