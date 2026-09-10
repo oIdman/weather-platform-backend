@@ -12,7 +12,7 @@ import java.math.BigDecimal;
 import java.util.Date;
 
 /**
- * @Description: 项目变更申请（影响评估规则 + Flowable 多级审批）
+ * @Description: 项目变更申请（影响评估规则）
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -65,10 +65,6 @@ public class MrpChangeRequest extends MrpBaseEntity {
     @JsonFormat(timezone = "GMT+8", pattern = "yyyy-MM-dd HH:mm:ss")
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date applyTime;
-
-    /** Flowable 流程实例ID */
-    @Schema(description = "Flowable 流程实例ID")
-    private String processInstanceId;
 
     /** 审批人 */
     @Schema(description = "审批人")

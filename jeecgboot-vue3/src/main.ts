@@ -18,6 +18,7 @@ import { setupElectron } from "@/electron";
 import { registerGlobComp } from '/@/components/registerGlobComp';
 import { registerThirdComp } from '/@/settings/registerThirdComp';
 import { registerSuper } from '/@/views/super/registerSuper';
+import { setupFormCreate } from '/@/plugins/form-create';
 import { useSso } from '/@/hooks/web/useSso';
 import { checkIsQiankunMicro } from "/@/qiankun/micro";
 import { autoUseQiankunMicro } from "/@/qiankun/micro/qiankunMicro";
@@ -68,6 +69,10 @@ async function bootstrap(props?: MainAppProps) {
 
   // 注册全局组件
   registerGlobComp(app);
+
+  // form-create/designer 的预编译模板无法经过 Vite 的组件自动导入，
+  // 需要在根应用上注册其依赖的 Ant Design 组件。
+  setupFormCreate(app);
 
   //CAS单点登录
   await useSso().ssoLogin();

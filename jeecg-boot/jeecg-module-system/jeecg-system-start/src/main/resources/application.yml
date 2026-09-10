@@ -12,3 +12,9 @@ spring:
     import: optional:classpath:config/application-liteflow.yml
   profiles:
     active: '@profile.name@'
+
+# Flowable 结构已按 8.0.0 核验；禁止运行时自动改表，流程仅允许通过工作流模块发布。
+flowable:
+  database-schema-update: false
+  check-process-definitions: false
+  async-executor-activate: false

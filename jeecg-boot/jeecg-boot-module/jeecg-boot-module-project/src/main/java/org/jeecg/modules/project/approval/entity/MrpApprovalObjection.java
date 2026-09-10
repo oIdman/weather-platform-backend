@@ -11,7 +11,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import java.util.Date;
 
 /**
- * @Description: 立项异议记录（关联 Flowable 核查流程）
+ * @Description: 立项异议记录
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -50,10 +50,6 @@ public class MrpApprovalObjection extends MrpBaseEntity {
     /** 状态(0-待核查,1-核查中,2-异议成立,3-异议不成立) */
     @Schema(description = "状态(0-待核查,1-核查中,2-异议成立,3-异议不成立)")
     private Integer status;
-
-    /** Flowable 流程实例ID */
-    @Schema(description = "Flowable 流程实例ID")
-    private String processInstanceId;
 
     /** 核查结论 */
     @Schema(description = "核查结论")

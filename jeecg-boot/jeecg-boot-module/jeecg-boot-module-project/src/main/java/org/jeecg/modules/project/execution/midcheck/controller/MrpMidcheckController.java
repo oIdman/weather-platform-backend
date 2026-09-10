@@ -26,10 +26,9 @@ import org.springframework.web.bind.annotation.RestController;
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 /**
- * @Description: 中期检查（报告 + 查重 + Flowable 评审）
+ * @Description: 中期检查（报告 + 查重）
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -82,26 +81,6 @@ public class MrpMidcheckController extends JeecgController<MrpMidcheckReport, IM
     public Result<MrpMidcheckReport> submit(@RequestParam(name = "id", required = true) String id) {
         service.submit(id);
         return Result.ok("提交成功！");
-    }
-
-    @Operation(summary = "发起中检评审", description = "已提交 → 评审中（启动 Flowable 流程）")
-    @PostMapping(value = "/startReview")
-    public Result<MrpMidcheckReview> startReview(@RequestParam(name = "id", required = true) String id) {
-        MrpMidcheckReview review = midcheckReviewService.startReview(id);
-        return Result.OK("评审已发起！", review);
-    }
-
-    @Operation(summary = "完成中检评审", description = "通过/退回，退回自动生成整改任务")
-    @PostMapping(value = "/completeReview")
-    public Result<MrpMidcheckReport> completeReview(@RequestBody Map<String, Object> body) {
-        String id = (String) body.get("id");
-        Boolean pass = (Boolean) body.get("pass");
-        String opinion = (String) body.get("opinion");
-        if (id == null || pass == null) {
-            return Result.error("参数不完整！");
-        }
-        midcheckReviewService.completeReview(id, pass, opinion);
-        return Result.ok("评审完成！");
     }
 
     @Operation(summary = "中检评审记录查询", description = "按中期报告ID查询评审记录")

@@ -47,10 +47,6 @@ public class MrpAcceptanceApplication extends MrpBaseEntity {
     @Schema(description = "通过率预测（占位）")
     private String passRatePrediction;
 
-    /** Flowable 验收审批流程实例ID */
-    @Schema(description = "Flowable 验收审批流程实例ID")
-    private String processInstanceId;
-
     /** 申请人 */
     @Schema(description = "申请人")
     private String applyBy;

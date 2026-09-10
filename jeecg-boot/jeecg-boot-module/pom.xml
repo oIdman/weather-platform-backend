@@ -16,6 +16,7 @@
         <module>jeecg-module-demo</module>
         <module>jeecg-boot-module-airag</module>
         <module>jeecg-boot-module-project</module>
+        <module>jeecg-module-workflow</module>
     </modules>
 
 

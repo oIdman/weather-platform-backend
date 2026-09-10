@@ -16,10 +16,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 
 /**
- * @Description: 立项异议管理（核查走 Flowable 流程）
+ * @Description: 立项异议管理
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -33,24 +32,11 @@ public class MrpApprovalObjectionController {
     @Autowired
     private IMrpApprovalObjectionService objectionService;
 
-    @Operation(summary = "提交异议", description = "提交后自动启动 Flowable 异议核查流程")
+    @Operation(summary = "登记异议")
     @PostMapping(value = "/submit")
     public Result<MrpApprovalObjection> submit(@RequestBody MrpApprovalObjection objection) {
         MrpApprovalObjection saved = objectionService.submit(objection);
         return Result.OK("异议提交成功！", saved);
-    }
-
-    @Operation(summary = "完成异议核查", description = "核查结论联动公示结果")
-    @PostMapping(value = "/checkComplete")
-    public Result<MrpApprovalObjection> checkComplete(@RequestBody Map<String, Object> body) {
-        String id = (String) body.get("id");
-        Boolean pass = (Boolean) body.get("pass");
-        String checkResult = (String) body.get("checkResult");
-        if (id == null || pass == null) {
-            return Result.error("参数不完整！");
-        }
-        objectionService.checkComplete(id, pass, checkResult);
-        return Result.ok("核查完成！");
     }
 
     @Operation(summary = "按公示查询异议", description = "按公示ID查询异议列表")

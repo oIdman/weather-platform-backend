@@ -20,11 +20,5 @@
             <groupId>org.jeecgframework.boot3</groupId>
             <artifactId>jeecg-system-local-api</artifactId>
         </dependency>
-        <!-- Spring Boot 4 / Jakarta compatible workflow engine. -->
-        <dependency>
-            <groupId>org.flowable</groupId>
-            <artifactId>flowable-spring-boot-starter-process</artifactId>
-            <version>8.0.0</version>
-        </dependency>
     </dependencies>
 </project>

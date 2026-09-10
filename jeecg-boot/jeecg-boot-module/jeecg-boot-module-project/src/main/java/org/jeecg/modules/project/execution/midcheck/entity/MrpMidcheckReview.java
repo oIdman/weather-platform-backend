@@ -11,7 +11,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import java.util.Date;
 
 /**
- * @Description: 中期检查评审（Flowable 中检评审流程）
+ * @Description: 中期检查评审记录
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -49,7 +49,4 @@ public class MrpMidcheckReview extends MrpBaseEntity {
     @DateTimeFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date reviewTime;
 
-    /** Flowable 流程实例ID */
-    @Schema(description = "Flowable 流程实例ID")
-    private String processInstanceId;
 }

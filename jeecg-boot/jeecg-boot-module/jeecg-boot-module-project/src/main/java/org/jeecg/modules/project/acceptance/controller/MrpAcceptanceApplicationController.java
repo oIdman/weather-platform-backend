@@ -26,7 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * @Description: 验收申请管理（提交 / 初审 / Flowable 验收审批，AI 占位）
+ * @Description: 验收申请管理（提交 / 初审，AI 占位）
  * @Author: meteo-project
  * @Date: 2026-08-25
  * @Version: V1.0
@@ -89,26 +89,6 @@ public class MrpAcceptanceApplicationController extends JeecgController<MrpAccep
         }
         service.preReview(id, pass, opinion);
         return Result.ok("初审完成！");
-    }
-
-    @Operation(summary = "发起验收审批", description = "待专家评审 → 评审中（启动 Flowable 验收审批流程）")
-    @PostMapping(value = "/startApproval")
-    public Result<MrpAcceptanceApplication> startApproval(@RequestParam(name = "id", required = true) String id) {
-        service.startApproval(id);
-        return Result.ok("审批已发起！");
-    }
-
-    @Operation(summary = "完成验收审批", description = "通过 → 已通过并联动项目状态为已验收；不通过 → 不合格")
-    @PostMapping(value = "/completeApproval")
-    public Result<MrpAcceptanceApplication> completeApproval(@RequestBody Map<String, Object> body) {
-        String id = (String) body.get("id");
-        Boolean pass = (Boolean) body.get("pass");
-        String conclusion = (String) body.get("conclusion");
-        if (id == null || pass == null) {
-            return Result.error("参数不完整！");
-        }
-        service.completeApproval(id, pass, conclusion);
-        return Result.ok("验收完成！");
     }
 
     @Operation(summary = "AI 预验收（占位）", description = "AI 预验收问题清单、通过率预测为二期 AI 能力")

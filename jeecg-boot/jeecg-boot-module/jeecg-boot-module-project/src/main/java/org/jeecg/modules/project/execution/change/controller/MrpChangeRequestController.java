@@ -22,10 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.Arrays;
-import java.util.Map;
 
 /**
- * @Description: 项目变更管理（影响评估规则 + Flowable 多级审批 + 全程留痕）
+ * @Description: 项目变更管理（影响评估规则）
  * @Author: meteo-project
  * @Date: 2026-08-24
  * @Version: V1.0
@@ -70,30 +69,11 @@ public class MrpChangeRequestController extends JeecgController<MrpChangeRequest
         return Result.ok("修改成功！");
     }
 
-    @Operation(summary = "提交变更审批", description = "规则评估影响等级（预算/关键人员/方向变更→高风险），启动 Flowable 多级审批")
+    @Operation(summary = "提交变更", description = "规则评估影响等级（预算/关键人员/方向变更→高风险）")
     @PostMapping(value = "/submit")
     public Result<MrpChangeRequest> submit(@RequestParam(name = "id", required = true) String id) {
         MrpChangeRequest change = service.submit(id);
         return Result.OK("提交成功！", change);
-    }
-
-    @Operation(summary = "完成当前审批节点", description = "高风险变更一级通过后自动进入二级审批，需再次调用；拒绝或低风险通过即结束")
-    @PostMapping(value = "/completeApproval")
-    public Result<MrpChangeRequest> completeApproval(@RequestBody Map<String, Object> body) {
-        String id = (String) body.get("id");
-        Boolean pass = (Boolean) body.get("pass");
-        String opinion = (String) body.get("opinion");
-        if (id == null || pass == null) {
-            return Result.error("参数不完整！");
-        }
-        service.completeApproval(id, pass, opinion);
-        return Result.ok("审批完成！");
-    }
-
-    @Operation(summary = "变更审批状态", description = "返回当前审批节点与剩余节点信息")
-    @GetMapping(value = "/approvalStatus")
-    public Result<Map<String, Object>> approvalStatus(@RequestParam(name = "id", required = true) String id) {
-        return Result.ok(service.approvalStatus(id));
     }
 
     @Operation(summary = "变更申请通过id查询", description = "变更申请通过id查询")

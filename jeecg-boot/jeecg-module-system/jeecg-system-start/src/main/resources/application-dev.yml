@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8880
   tomcat:
     max-swallow-size: -1
   servlet:
@@ -144,9 +144,9 @@ spring:
           slow-sql-millis: 5000
       datasource:
         master:
-          url: jdbc:mysql://127.0.0.1:3306/jeecg-boot?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+          url: jdbc:mysql://127.0.0.1:3306/jeecg-boot?characterEncoding=UTF-8&useUnicode=true&useSSL=false&tinyInt1isBit=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&nullCatalogMeansCurrent=true
           username: root
-          password: root
+          password: Chen123456
           driver-class-name: com.mysql.cj.jdbc.Driver
 #        # shardingjdbc数据源
 #        sharding-db:
@@ -184,8 +184,8 @@ jeecg:
   # AI集成
   ai-chat:
     enabled: true
-    model: deepseek-v4-pro
-    apiKey: ??
+    model: deepseek-v4-flash
+    apiKey: sk-c233b6613b3f4d73b13f2f8653c6a9e4
     apiHost: https://api.deepseek.com/v1
     timeout: 60
     skills-dir:
@@ -282,7 +282,7 @@ jeecg:
   uploadType: local
   # 前端访问地址
   domainUrl:
-    pc: http://localhost:3100
+    pc: http://localhost:3111
     app: http://localhost:8051
   path:
     #文件上传根目录 设置

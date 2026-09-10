@@ -17,9 +17,4 @@ public interface IMrpAcceptanceApplicationService extends IService<MrpAcceptance
     /** 初审：通过 → 待专家评审；不通过 → 退回已提交 */
     void preReview(String id, boolean pass, String opinion);
 
-    /** 发起验收审批：待专家评审 → 评审中（启动 Flowable 流程） */
-    void startApproval(String id);
-
-    /** 完成验收审批：通过/不合格，通过联动项目状态为已验收 */
-    void completeApproval(String id, boolean pass, String conclusion);
 }
