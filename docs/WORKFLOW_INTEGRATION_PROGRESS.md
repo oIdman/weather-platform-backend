@@ -2931,6 +2931,16 @@
 
 下一步：补充独立启动器最小配置的 Spring Context 冒烟，并验证退回、撤回、跳过与消息/信号/超时事件的组合时间线。
 
+## 2026-09-15：独立工作流启动器 Spring Context 冒烟通过
+
+- 独立启动器明确关闭不适用的动态数据源和 Shiro 自动配置，使用自身标准数据源配置，不再依赖单体系统的 Realm 与动态数据源环境。
+- 补齐工作流 Mapper 扫描、默认身份适配器、Jackson 和 HTTP 客户端装配；默认系统用户的登录名与显示名保持独立语义。
+- 新增 H2 测试作用域依赖及 Context 冒烟测试，实际创建 Flowable common、engine、history、identity、eventregistry 表并装配流程引擎与工作流服务。
+
+验证说明：执行 `WorkflowStandaloneApplicationTest`，测试 1 项通过，10 个 Maven 反应堆模块全部 `BUILD SUCCESS`；本轮未整包、未重启现有前后端服务。
+
+下一步：验证退回、撤回、跳过与消息/信号/超时事件的组合时间线，并继续收口独立服务对外 HTTP 运行验证。
+
 ## 2026-09-15：可运行工作流版本 GitHub 快照
 
 - 整理当前工作流后端、前端、独立启动器、安装 SQL、Flyway 增量脚本和运行文档，形成可追踪的 `dev` 分支快照。

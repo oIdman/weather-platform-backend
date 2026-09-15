@@ -1,9 +1,15 @@
 package org.jeecg.modules.workflow.starter;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jeecg.common.system.api.ISysBaseAPI;
 import org.jeecg.common.system.vo.LoginUser;
+import org.jeecg.config.RestTemplateConfig;
+import org.jeecg.modules.workflow.adapter.WorkflowCandidateIdentityAdapter;
+import org.jeecg.modules.workflow.adapter.WorkflowIdentityAdapter;
 import org.jeecg.modules.workflow.adapter.jeecg.JeecgWorkflowCandidateIdentityAdapter;
 import org.jeecg.modules.workflow.adapter.jeecg.JeecgWorkflowIdentityAdapter;
+import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -11,8 +17,10 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.FilterType;
+import org.springframework.context.annotation.Import;
 
 import java.lang.reflect.Array;
+import java.text.SimpleDateFormat;
 import java.lang.reflect.Proxy;
 import java.util.Collection;
 import java.util.Collections;
@@ -30,6 +38,8 @@ import java.util.Set;
  */
 @SpringBootApplication
 @EnableConfigurationProperties(WorkflowStandaloneProperties.class)
+@MapperScan("org.jeecg.modules.workflow.mapper")
+@Import(RestTemplateConfig.class)
 @ComponentScan(
         basePackages = "org.jeecg.modules.workflow",
         excludeFilters = @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE,
@@ -38,6 +48,22 @@ public class WorkflowStandaloneApplication {
 
     public static void main(String[] args) {
         SpringApplication.run(WorkflowStandaloneApplication.class, args);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean({WorkflowIdentityAdapter.class, WorkflowCandidateIdentityAdapter.class})
+    public StandaloneWorkflowIdentityAdapter standaloneWorkflowIdentityAdapter(
+            WorkflowStandaloneProperties properties) {
+        return new StandaloneWorkflowIdentityAdapter(properties);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(ObjectMapper.class)
+    public ObjectMapper standaloneObjectMapper() {
+        ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+        objectMapper.setDateFormat(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss"));
+        objectMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+        return objectMapper;
     }
 
     /**
@@ -95,14 +121,16 @@ public class WorkflowStandaloneApplication {
         if (!knownUser(properties, userId)) {
             return null;
         }
-        String username = safeMap(properties.getUserNames()).getOrDefault(userId,
-                Objects.equals(userId, properties.getUserId()) ? properties.getUsername() : userId);
+        boolean defaultUser = Objects.equals(userId, properties.getUserId());
+        String configuredName = safeMap(properties.getUserNames()).getOrDefault(userId, userId);
+        String username = defaultUser ? properties.getUsername() : configuredName;
+        String realname = defaultUser ? properties.getDisplayName() : configuredName;
         List<String> departments = departments(properties, userId, true);
         List<String> roles = roles(properties, userId, true);
         return new LoginUser()
                 .setId(userId)
                 .setUsername(username)
-                .setRealname(Objects.equals(userId, properties.getUserId()) ? properties.getDisplayName() : username)
+                .setRealname(realname)
                 .setOrgId(departments.stream().findFirst().orElse(null))
                 .setOrgCode(departments.stream().findFirst().orElse(null))
                 .setRoleCode(String.join(",", roles))

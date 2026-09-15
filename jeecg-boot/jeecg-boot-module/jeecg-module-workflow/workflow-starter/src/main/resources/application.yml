@@ -4,10 +4,17 @@ server:
 spring:
   application:
     name: jeecg-workflow-service
+  autoconfigure:
+    exclude:
+      - org.apache.shiro.spring.boot.autoconfigure.ShiroAutoConfiguration
+      - org.apache.shiro.spring.boot.autoconfigure.ShiroBeanAutoConfiguration
+      - org.apache.shiro.spring.boot.autoconfigure.ShiroAnnotationProcessorAutoConfiguration
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/jeecg_boot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
     password: change-me
+    dynamic:
+      enabled: false
   sql:
     init:
       mode: never

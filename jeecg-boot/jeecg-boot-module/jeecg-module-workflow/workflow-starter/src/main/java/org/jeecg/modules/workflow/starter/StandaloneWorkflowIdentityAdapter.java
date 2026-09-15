@@ -2,8 +2,6 @@ package org.jeecg.modules.workflow.starter;
 
 import org.jeecg.modules.workflow.adapter.WorkflowCandidateIdentityAdapter;
 import org.jeecg.modules.workflow.adapter.WorkflowIdentityAdapter;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -13,8 +11,6 @@ import java.util.Map;
 import java.util.Set;
 
 /** 默认可替换的独立服务身份适配器。 */
-@Component
-@ConditionalOnMissingBean({WorkflowIdentityAdapter.class, WorkflowCandidateIdentityAdapter.class})
 public class StandaloneWorkflowIdentityAdapter implements WorkflowIdentityAdapter, WorkflowCandidateIdentityAdapter {
 
     private final WorkflowStandaloneProperties properties;
