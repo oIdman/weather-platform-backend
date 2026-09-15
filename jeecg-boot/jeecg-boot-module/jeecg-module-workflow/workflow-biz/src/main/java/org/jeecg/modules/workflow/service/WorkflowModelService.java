@@ -2,15 +2,18 @@ package org.jeecg.modules.workflow.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.flowable.common.engine.api.FlowableException;
 import org.flowable.common.engine.impl.db.SuspensionState;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
+import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.Model;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.runtime.ProcessInstance;
+import org.flowable.task.api.Task;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.workflow.adapter.WorkflowIdentityAdapter;
 import org.jeecg.modules.workflow.api.dto.WorkflowModelSaveRequest;
@@ -19,6 +22,7 @@ import org.jeecg.modules.workflow.api.vo.WorkflowFormVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowModelDefinitionVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowModelVO;
 import org.jeecg.modules.workflow.flowable.WorkflowBpmnValidator;
+import org.jeecg.modules.workflow.flowable.WorkflowProcessCleanupContext;
 import org.jeecg.modules.workflow.flowable.WorkflowSimpleModelConverter;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -43,31 +47,37 @@ public class WorkflowModelService {
 
     private final RepositoryService repositoryService;
     private final RuntimeService runtimeService;
+    private final TaskService taskService;
     private final HistoryService historyService;
     private final WorkflowIdentityAdapter identityAdapter;
     private final WorkflowBpmnValidator bpmnValidator;
     private final WorkflowSimpleModelConverter simpleModelConverter;
     private final WorkflowCategoryService categoryService;
     private final WorkflowFormService formService;
+    private final WorkflowProcessCopyService processCopyService;
     private final ObjectMapper objectMapper;
 
     public WorkflowModelService(RepositoryService repositoryService,
                                 RuntimeService runtimeService,
+                                TaskService taskService,
                                 HistoryService historyService,
                                 WorkflowIdentityAdapter identityAdapter,
                                 WorkflowBpmnValidator bpmnValidator,
                                 WorkflowSimpleModelConverter simpleModelConverter,
                                 WorkflowCategoryService categoryService,
                                 WorkflowFormService formService,
+                                WorkflowProcessCopyService processCopyService,
                                 ObjectMapper objectMapper) {
         this.repositoryService = repositoryService;
         this.runtimeService = runtimeService;
+        this.taskService = taskService;
         this.historyService = historyService;
         this.identityAdapter = identityAdapter;
         this.bpmnValidator = bpmnValidator;
         this.simpleModelConverter = simpleModelConverter;
         this.categoryService = categoryService;
         this.formService = formService;
+        this.processCopyService = processCopyService;
         this.objectMapper = objectMapper;
     }
 
@@ -227,20 +237,65 @@ public class WorkflowModelService {
     public void clean(String id) {
         Model model = requireManager(id);
         String tenantId = identityAdapter.currentTenantId();
-        List<ProcessInstance> running = runtimeService.createProcessInstanceQuery()
-                .processDefinitionKey(model.getKey())
-                .processInstanceTenantId(tenantId)
-                .list();
-        for (ProcessInstance instance : running) {
-            runtimeService.deleteProcessInstance(instance.getId(), "流程模型清理");
+        // 清理期间 Flowable 可能先挂起任务再派发取消事件。整个清理操作都置于
+        // 上下文中，先删除流程实例，再清理历史和残留任务，避免任务取消监听器
+        // 在流程实例尚未删除时尝试写入挂起任务变量。
+        WorkflowProcessCleanupContext.enter();
+        try {
+            String reason = "流程模型清理";
+            List<ProcessInstance> running = runtimeService.createProcessInstanceQuery()
+                    .processDefinitionKey(model.getKey())
+                    .processInstanceTenantId(tenantId)
+                    .list();
+            for (ProcessInstance instance : running) {
+                // Flowable 对挂起任务禁止写本地变量；先恢复实例状态再删除，
+                // 避免引擎取消回调或其他监听器在清理窗口触发该校验。
+                if (instance.isSuspended()) {
+                    runtimeService.activateProcessInstanceById(instance.getId());
+                }
+                runtimeService.deleteProcessInstance(instance.getId(), reason);
+                processCopyService.deleteByProcessInstanceId(instance.getId());
+            }
+            List<HistoricProcessInstance> history = historyService.createHistoricProcessInstanceQuery()
+                    .processDefinitionKey(model.getKey())
+                    .processInstanceTenantId(tenantId)
+                    .list();
+            for (HistoricProcessInstance instance : history) {
+                historyService.deleteHistoricProcessInstance(instance.getId());
+                processCopyService.deleteByProcessInstanceId(instance.getId());
+            }
+            // 正常情况下运行任务已经随流程实例删除；这里仅清理可能遗留的孤立任务。
+            // 挂起任务不能接受任务变量，也无需再次删除，交由引擎实例删除处理。
+            List<Task> tasks = taskService.createTaskQuery()
+                    .processDefinitionKey(model.getKey())
+                    .taskTenantId(tenantId)
+                    .list();
+            for (Task task : tasks) {
+                if (task.isSuspended()) {
+                    continue;
+                }
+                try {
+                    taskService.deleteTask(task.getId(), reason);
+                } catch (FlowableException exception) {
+                    // 清理与引擎取消回调并发时，任务可能已经被删除或挂起；保持幂等。
+                    if (!isMissingTask(exception)) {
+                        throw exception;
+                    }
+                }
+            }
+        } finally {
+            WorkflowProcessCleanupContext.exit();
         }
-        List<HistoricProcessInstance> history = historyService.createHistoricProcessInstanceQuery()
-                .processDefinitionKey(model.getKey())
-                .processInstanceTenantId(tenantId)
-                .list();
-        for (HistoricProcessInstance instance : history) {
-            historyService.deleteHistoricProcessInstance(instance.getId());
+    }
+
+    private boolean isMissingTask(FlowableException exception) {
+        String message = exception.getMessage();
+        if (message == null) {
+            return false;
         }
+        String normalized = message.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("suspended task")
+                || (normalized.contains("task with id") && normalized.contains("does not exist"));
     }
 
     private void saveModel(Model model, WorkflowModelSaveRequest request) {

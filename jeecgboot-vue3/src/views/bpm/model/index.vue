@@ -81,6 +81,13 @@
                     <template #overlay>
                       <a-menu>
                         <a-menu-item v-auth="'bpm:model:update'" @click="openDesigner(record)">设计</a-menu-item>
+                        <a-menu-item
+                          v-if="record.processDefinition"
+                          v-auth="'bpm:process-instance:manager-query'"
+                          @click="openReport(record)"
+                        >
+                          报表
+                        </a-menu-item>
                         <a-menu-item v-if="record.processDefinition" v-auth="'bpm:model:update'" @click="toggleState(record)">
                           {{ record.processDefinition.suspensionState === 1 ? '停用' : '启用' }}
                         </a-menu-item>
@@ -104,13 +111,17 @@
       <a-alert class="mb-3" message="BPMN 图形设计器保存的是 Flowable 可直接部署的标准 XML；源码模式用于高级属性和故障排查。" show-icon type="info" />
       <a-tabs v-model:active-key="designTab" @change="syncDesignSource">
         <a-tab-pane v-if="designForm.type === 10" key="bpmn-visual" tab="图形设计">
-          <BpmnDesigner v-model="designForm.bpmnXml" />
+          <BpmnDesigner v-model="designForm.bpmnXml" :form-fields="designFormFields" />
         </a-tab-pane>
         <a-tab-pane v-if="designForm.type === 10" key="bpmn-xml" tab="BPMN XML">
           <a-textarea v-model:value="designForm.bpmnXml" class="source-editor" spellcheck="false" />
         </a-tab-pane>
         <a-tab-pane v-if="designForm.type === 20" key="simple-visual" tab="图形设计">
-          <SimpleProcessDesigner v-model="simpleModel" />
+          <SimpleProcessDesigner
+            v-model="simpleModel"
+            :start-user-ids="designForm.startUserIds"
+            :start-dept-ids="designForm.startDeptIds"
+          />
         </a-tab-pane>
         <a-tab-pane v-if="designForm.type === 20" key="simple-json" tab="JSON（高级）">
           <a-textarea v-model:value="simpleJson" class="source-editor" spellcheck="false" />
@@ -229,6 +240,7 @@
   });
   const form = reactive<BpmModel>(emptyForm());
   const designForm = reactive<BpmModel>(emptyForm());
+  const designFormFields = ref<{ label: string; value: string }[]>([]);
 
   const groups = computed<ModelGroup[]>(() => {
     const known = categories.value.map((category) => ({
@@ -252,6 +264,17 @@
 
   function openCategoryManager() {
     router.push('/bpm/manager/category');
+  }
+
+  function openReport(model: BpmModel) {
+    if (!model.processDefinition) return;
+    router.push({
+      path: '/bpm/process-instance/report',
+      query: {
+        processDefinitionId: model.processDefinition.id,
+        processDefinitionKey: model.key,
+      },
+    });
   }
 
   async function previewForm(model: BpmModel) {
@@ -375,6 +398,22 @@
     if (model.type === 20) { await openEditor(model, 2); return; }
     const detail = await getModel(model.id!);
     Object.assign(designForm, emptyForm(), detail);
+    designFormFields.value = [];
+    if (detail.formId) {
+      try {
+        const form = await getForm(detail.formId);
+        const rules = (form.fields || []).map((field) => formCreate.parseJson(field));
+        const fields: { label: string; value: string }[] = [];
+        const collect = (items: any[]) => items.forEach((item) => {
+          if (item?.field) fields.push({ label: item.title || item.field, value: item.field });
+          if (Array.isArray(item?.children)) collect(item.children);
+        });
+        collect(rules);
+        designFormFields.value = fields;
+      } catch {
+        designFormFields.value = [];
+      }
+    }
     simpleModel.value = structuredClone(detail.simpleModel || {});
     simpleJson.value = JSON.stringify(simpleModel.value, null, 2);
     designTab.value = detail.type === 20 ? 'simple-visual' : 'bpmn-visual';

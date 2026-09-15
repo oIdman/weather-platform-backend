@@ -6,6 +6,15 @@ export default {
   associations: [],
   types: [
     {
+      name: 'Collectable',
+      isAbstract: true,
+      extends: ['bpmn:MultiInstanceLoopCharacteristics'],
+      properties: [
+        { name: 'collection', isAttr: true, type: 'String' },
+        { name: 'elementVariable', isAttr: true, type: 'String' },
+      ],
+    },
+    {
       name: 'Assignable',
       extends: ['bpmn:UserTask'],
       properties: [
@@ -14,6 +23,7 @@ export default {
         { name: 'candidateGroups', isAttr: true, type: 'String' },
         { name: 'dueDate', isAttr: true, type: 'String' },
         { name: 'priority', isAttr: true, type: 'String' },
+        { name: 'skipExpression', isAttr: true, type: 'String' },
       ],
     },
     {
@@ -30,6 +40,17 @@ export default {
         { name: 'class', isAttr: true, type: 'String' },
         { name: 'delegateExpression', isAttr: true, type: 'String' },
         { name: 'resultVariable', isAttr: true, type: 'String' },
+        { name: 'type', isAttr: true, type: 'String' },
+      ],
+    },
+    {
+      name: 'CallActivityLike',
+      extends: ['bpmn:CallActivity'],
+      properties: [
+        { name: 'processInstanceName', isAttr: true, type: 'String' },
+        { name: 'inheritVariables', isAttr: true, type: 'Boolean', default: false },
+        { name: 'inheritBusinessKey', isAttr: true, type: 'Boolean', default: false },
+        { name: 'businessKey', isAttr: true, type: 'String' },
       ],
     },
     {

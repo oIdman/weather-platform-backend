@@ -20,4 +20,8 @@ public class WorkflowApprovalDetailVO {
     private WorkflowTaskVO todoTask;
     private WorkflowDefinitionVO processDefinition;
     private WorkflowBpmnViewVO bpmnModelView;
+    /** 流程实例内产生的抄送记录，供详情时间线展示。 */
+    private List<WorkflowProcessCopyVO> copies = Collections.emptyList();
+    /** 网关、子流程、边界事件等非审批节点的运行历史。 */
+    private List<WorkflowTimelineEventVO> timelineEvents = Collections.emptyList();
 }

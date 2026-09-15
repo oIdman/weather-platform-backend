@@ -33,4 +33,6 @@ public class WorkflowDefinitionVO {
     private Long sort;
     private String bpmnXml;
     private String simpleModel;
+    /** 消息启动事件名称，供外部触发器和发起页识别事件型流程。 */
+    private List<String> messageStartNames;
 }

@@ -59,6 +59,7 @@ public class WorkflowProcessCopyService extends WorkflowMetadataServiceSupport {
     @Transactional(rollbackFor = Exception.class)
     public void copy(WorkflowTaskCopyRequest request) {
         Task task = requireOperableTask(request.getId());
+        requireCopyButtonEnabled(task);
         HistoricProcessInstance instance = historyService.createHistoricProcessInstanceQuery()
                 .processInstanceId(task.getProcessInstanceId())
                 .processInstanceTenantId(identityAdapter.currentTenantId())
@@ -97,9 +98,10 @@ public class WorkflowProcessCopyService extends WorkflowMetadataServiceSupport {
         if (copyUserIds == null || copyUserIds.isEmpty()) {
             return;
         }
+        String effectiveTenantId = StringUtils.hasText(tenantId) ? tenantId.trim() : "0";
         HistoricProcessInstance instance = historyService.createHistoricProcessInstanceQuery()
                 .processInstanceId(processInstanceId)
-                .processInstanceTenantId(tenantId)
+                .processInstanceTenantId(effectiveTenantId)
                 .singleResult();
         if (instance == null) {
             throw new JeecgBootException("流程实例不存在或无权访问");
@@ -111,7 +113,7 @@ public class WorkflowProcessCopyService extends WorkflowMetadataServiceSupport {
         }
         long numericTenantId;
         try {
-            numericTenantId = Long.parseLong(tenantId);
+            numericTenantId = Long.parseLong(effectiveTenantId);
         } catch (NumberFormatException exception) {
             throw new JeecgBootException("流程租户编号不是有效数字");
         }
@@ -164,6 +166,21 @@ public class WorkflowProcessCopyService extends WorkflowMetadataServiceSupport {
         return new WorkflowPage<>(page.getRecords().stream().map(this::toVO).toList(), page.getTotal());
     }
 
+    /**
+     * 查询指定流程实例的全部抄送记录。调用方应先完成流程实例的租户和访问权限校验。
+     */
+    public List<WorkflowProcessCopyVO> listByProcessInstanceId(String processInstanceId) {
+        if (!StringUtils.hasText(processInstanceId)) {
+            return List.of();
+        }
+        return mapper.selectList(new LambdaQueryWrapper<WorkflowProcessInstanceCopy>()
+                        .eq(WorkflowProcessInstanceCopy::getTenantId, currentTenantId())
+                        .eq(WorkflowProcessInstanceCopy::getProcessInstanceId, processInstanceId.trim())
+                        .orderByAsc(WorkflowProcessInstanceCopy::getCreateTime)
+                        .orderByAsc(WorkflowProcessInstanceCopy::getId))
+                .stream().map(this::toVO).toList();
+    }
+
     private Task requireOperableTask(String taskId) {
         String tenantId = identityAdapter.currentTenantId();
         String userId = identityAdapter.currentUserId();
@@ -183,6 +200,24 @@ public class WorkflowProcessCopyService extends WorkflowMetadataServiceSupport {
             throw new JeecgBootException("当前用户无权操作该任务");
         }
         return task;
+    }
+
+    private void requireCopyButtonEnabled(Task task) {
+        ProcessDefinition definition = repositoryService.createProcessDefinitionQuery()
+                .processDefinitionId(task.getProcessDefinitionId()).singleResult();
+        if (definition == null) return;
+        org.flowable.bpmn.model.BpmnModel model = repositoryService.getBpmnModel(definition.getId());
+        org.flowable.bpmn.model.FlowElement element = model == null ? null
+                : model.getFlowElement(task.getTaskDefinitionKey());
+        if (!(element instanceof org.flowable.bpmn.model.UserTask userTask)
+                || userTask.getExtensionElements() == null) return;
+        List<org.flowable.bpmn.model.ExtensionElement> values = userTask.getExtensionElements()
+                .get(org.jeecg.modules.workflow.api.constant.WorkflowProcessConstants.EXTENSION_ENABLED_BUTTONS);
+        if (values == null || values.isEmpty() || values.get(0).getElementText() == null
+                || values.get(0).getElementText().isBlank()) return;
+        boolean enabled = java.util.Arrays.stream(values.get(0).getElementText().split(","))
+                .map(String::trim).anyMatch("7"::equals);
+        if (!enabled) throw new JeecgBootException("当前节点未启用抄送操作");
     }
 
     private WorkflowProcessCopyVO toVO(WorkflowProcessInstanceCopy entity) {

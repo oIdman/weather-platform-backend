@@ -33,6 +33,25 @@
 
       <a-tabs v-model:active-key="activeTab" class="process-form-tabs">
         <a-tab-pane key="form" tab="表单填写">
+          <a-alert
+            v-if="selectedDefinition.messageStartNames?.length"
+            type="info"
+            show-icon
+            class="start-event-alert"
+            message="该流程包含消息启动事件"
+            description="可选择由当前用户发起，或使用配置的消息名称启动；消息启动时会保留当前表单变量。"
+          />
+          <a-form v-if="selectedDefinition.messageStartNames?.length" layout="inline" class="start-event-form">
+            <a-form-item label="发起方式">
+              <a-radio-group v-model:value="startMode">
+                <a-radio value="user">用户发起</a-radio>
+                <a-radio value="message">消息启动</a-radio>
+              </a-radio-group>
+            </a-form-item>
+            <a-form-item v-if="startMode === 'message'" label="消息名称" required>
+              <a-select v-model:value="messageStartName" style="min-width: 220px" :options="messageStartNameOptions" />
+            </a-form-item>
+          </a-form>
           <a-row :gutter="[48, 16]" class="form-layout">
             <a-col :xs="24" :md="17" :xl="18" class="form-column">
               <div v-if="formRules.length" class="dynamic-form">
@@ -99,7 +118,7 @@
   import { getProcessDefinitionList, type BpmProcessDefinition } from '/@/api/bpm/definition';
   import JSelectUser from '/@/components/Form/src/jeecg/components/JSelectUser.vue';
   import { useMessage } from '/@/hooks/web/useMessage';
-  import { getApprovalDetail, startProcess, type WorkflowActivityNode } from '/@/views/workflow/workflow.api';
+  import { getApprovalDetail, startProcess, startProcessByMessage, type WorkflowActivityNode } from '/@/views/workflow/workflow.api';
 
   interface DefinitionGroup {
     code: string;
@@ -122,9 +141,14 @@
   const formOption = ref<Record<string, unknown>>({});
   const formVariables = ref<Record<string, unknown>>({});
   const formApi = ref<any>();
+  const startMode = ref<'user' | 'message'>('user');
+  const messageStartName = ref('');
   const activityNodes = ref<WorkflowActivityNode[]>([]);
   const startUserSelectTasks = ref<WorkflowActivityNode[]>([]);
   const startUserSelectAssignees = ref<Record<string, string[]>>({});
+  const messageStartNameOptions = computed(() =>
+    (selectedDefinition.value?.messageStartNames || []).map((name) => ({ label: name, value: name }))
+  );
 
   const availableGroups = computed<DefinitionGroup[]>(() => {
     const search = keyword.value.trim().toLowerCase();
@@ -170,6 +194,8 @@
       return;
     }
     selectedDefinition.value = definition;
+    startMode.value = 'user';
+    messageStartName.value = definition.messageStartNames?.[0] || '';
     activeTab.value = 'form';
     formVariables.value = {};
     const option = definition.formConf ? formCreate.parseJson(definition.formConf) : {};
@@ -183,6 +209,8 @@
 
   function cancelSelection() {
     selectedDefinition.value = undefined;
+    startMode.value = 'user';
+    messageStartName.value = '';
     activeTab.value = 'form';
     formRules.value = [];
     formVariables.value = {};
@@ -220,6 +248,10 @@
 
   async function submitStart() {
     if (!selectedDefinition.value) return;
+    if (startMode.value === 'message' && !messageStartName.value) {
+      createMessage.warning('请选择消息启动名称');
+      return;
+    }
     if (formApi.value) {
       try {
         await formApi.value.validate();
@@ -238,11 +270,20 @@
     }
     starting.value = true;
     try {
-      await startProcess({
-        processDefinitionId: selectedDefinition.value.id,
-        variables,
-        startUserSelectAssignees: startUserSelectAssignees.value,
-      });
+      if (startMode.value === 'message') {
+        await startProcessByMessage({
+          messageName: messageStartName.value,
+          processInstanceName: selectedDefinition.value.name,
+          variables,
+          startUserSelectAssignees: startUserSelectAssignees.value,
+        });
+      } else {
+        await startProcess({
+          processDefinitionId: selectedDefinition.value.id,
+          variables,
+          startUserSelectAssignees: startUserSelectAssignees.value,
+        });
+      }
       createMessage.success('流程发起成功');
       await router.push('/bpm/task/my');
     } finally {
@@ -311,6 +352,14 @@
 
   .process-form-tabs {
     min-height: calc(100vh - 270px);
+  }
+
+  .start-event-alert {
+    margin: 16px 20px 0;
+  }
+
+  .start-event-form {
+    margin: 16px 20px 0;
   }
 
   .form-layout {

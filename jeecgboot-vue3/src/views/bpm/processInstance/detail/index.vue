@@ -3,7 +3,7 @@
   <div class="process-detail-page">
     <a-spin :spinning="loading">
       <a-page-header title="流程详情" :sub-title="detail?.processInstance?.name" @back="router.back()">
-        <template #extra><a-button @click="printPage">打印</a-button></template>
+        <template #extra><a-button @click="printVisible = true">打印</a-button></template>
       </a-page-header>
       <a-row v-if="detail?.processInstance" :gutter="16">
         <a-col :xs="24" :xl="17">
@@ -23,7 +23,8 @@
           </a-card>
 
           <a-card title="表单数据" :bordered="false" class="section-card">
-            <div v-if="formRules.length" class="readonly-form">
+            <TopicDeclarationForm v-if="isTopicDeclarationForm" :read-only="true" :initial-data="customFormData" />
+            <div v-else-if="formRules.length" class="readonly-form">
               <FormCreate v-model="detailFormValue" :option="formOption" :rule="formRules" />
             </div>
             <a-descriptions v-else-if="variableEntries.length" :column="2" bordered size="small">
@@ -79,11 +80,45 @@
             <a-empty v-else description="流程尚未产生审批任务" />
           </a-card>
 
+          <a-card v-if="detail.copies?.length" title="抄送记录" :bordered="false" class="section-card">
+            <a-list :data-source="detail.copies" size="small">
+              <template #renderItem="{ item }">
+                <a-list-item>
+                  <a-list-item-meta
+                    :title="`${item.activityName || '抄送'} · ${item.userName || item.userId || '未知用户'}`"
+                    :description="`${formatDate(item.createTime)}${item.reason ? ` · ${item.reason}` : ''}`"
+                  />
+                </a-list-item>
+              </template>
+            </a-list>
+          </a-card>
+
+          <a-card v-if="detail.timelineEvents?.length" title="运行事件" :bordered="false" class="section-card">
+            <a-timeline>
+              <a-timeline-item v-for="event in detail.timelineEvents" :key="event.id" :color="event.endTime ? 'green' : 'blue'">
+                <div class="timeline-title">
+                  <span>{{ event.name }}</span>
+                  <a-tag :color="event.endTime ? 'success' : 'processing'">{{ event.type }}</a-tag>
+                </div>
+                <div class="timeline-meta">
+                  {{ formatDate(event.startTime) }}<template v-if="event.endTime"> 至 {{ formatDate(event.endTime) }}</template>
+                </div>
+                <div v-if="event.assigneeName || event.assignee" class="timeline-meta">办理人：{{ event.assigneeName || event.assignee }}</div>
+                <div v-if="event.reason" class="timeline-reason">意见：{{ event.reason }}</div>
+              </a-timeline-item>
+            </a-timeline>
+          </a-card>
+
           <a-card title="流程图数据" :bordered="false" class="section-card">
             <div v-if="detail.activityNodes?.length" class="node-strip">
               <template v-for="(node, index) in detail.activityNodes" :key="`node-${node.id}`">
                 <div v-if="index" class="node-arrow">→</div>
-                <div class="node-box" :class="nodeStatusClass(node.status)">{{ node.name }}</div>
+                <div class="node-box" :class="nodeStatusClass(node.status)">
+                  <span>{{ node.name }}</span>
+                  <a-tag v-if="node.multiInstance" size="small" color="blue"
+                    >{{ node.completedInstanceCount || 0 }}/{{ node.instanceCount || 0 }}</a-tag
+                  >
+                </div>
               </template>
             </div>
             <a-collapse ghost class="source-collapse">
@@ -104,6 +139,7 @@
             <a-space wrap>
               <a-button v-if="canAction(1)" type="primary" @click="openAction('approve')">{{ buttonLabel(1, '通过') }}</a-button>
               <a-button v-if="canAction(2)" danger @click="openAction('reject')">{{ buttonLabel(2, '拒绝') }}</a-button>
+              <a-button v-if="canAction(8)" @click="openAction('skip')">{{ buttonLabel(8, '跳过') }}</a-button>
               <a-button v-if="canAction(6) && !detail.todoTask.parentTaskId" @click="openAction('return')">{{ buttonLabel(6, '退回') }}</a-button>
               <a-button v-if="canAction(3)" @click="openAction('transfer')">{{ buttonLabel(3, '转办') }}</a-button>
               <a-button v-if="canAction(4)" @click="openAction('delegate')">{{ buttonLabel(4, '委派') }}</a-button>
@@ -200,6 +236,8 @@
         </template>
       </a-form>
     </a-modal>
+
+    <ProcessPrintModal v-model:open="printVisible" :process-instance-id="processInstanceId" />
   </div>
 </template>
 
@@ -208,8 +246,10 @@
   import formCreate, { type Rule } from '@form-create/ant-design-vue';
   import { useRoute, useRouter } from 'vue-router';
   import JSelectUser from '/@/components/Form/src/jeecg/components/JSelectUser.vue';
+  import ProcessPrintModal from './modules/ProcessPrintModal.vue';
   import JImageUpload from '/@/components/Form/src/jeecg/components/JImageUpload.vue';
   import JUpload from '/@/components/Form/src/jeecg/components/JUpload/JUpload.vue';
+  import TopicDeclarationForm from '/@/views/bpm/topic-declaration/components/TopicDeclarationForm.vue';
   import { useMessage } from '/@/hooks/web/useMessage';
   import { getFileAccessHttpUrl } from '/@/utils/common/compUtils';
   import {
@@ -225,13 +265,14 @@
     getTaskListByReturn,
     rejectTask,
     returnTask,
+    skipTask,
     transferTask,
     type WorkflowApprovalDetail,
     type WorkflowComment,
     type WorkflowActivityNode,
   } from '/@/views/workflow/workflow.api';
 
-  type ActionType = 'approve' | 'reject' | 'return' | 'delegate' | 'transfer' | 'sign' | 'deleteSign' | 'copy';
+  type ActionType = 'approve' | 'reject' | 'skip' | 'return' | 'delegate' | 'transfer' | 'sign' | 'deleteSign' | 'copy';
 
   const route = useRoute();
   const router = useRouter();
@@ -242,6 +283,7 @@
   const detail = ref<WorkflowApprovalDetail>();
   const comments = ref<WorkflowComment[]>([]);
   const actionVisible = ref(false);
+  const printVisible = ref(false);
   const actionType = ref<ActionType>('approve');
   const actionReason = ref('');
   const signPicUrl = ref('');
@@ -260,10 +302,13 @@
 
   const processInstanceId = computed(() => String(route.query.id || ''));
   const taskId = computed(() => (route.query.taskId ? String(route.query.taskId) : undefined));
+  const isTopicDeclarationForm = computed(() => detail.value?.processDefinition?.formCustomViewPath === '/bpm/topic-declaration/detail.vue');
+  const customFormData = computed(() => detailFormValue.value as any);
   const variableEntries = computed(() => Object.entries(detail.value?.processInstance?.formVariables || {}));
   const actionTitleMap: Record<ActionType, string> = {
     approve: '通过任务',
     reject: '拒绝任务',
+    skip: '跳过任务',
     return: '退回任务',
     delegate: '委派任务',
     transfer: '转办任务',
@@ -275,7 +320,7 @@
   const userFieldLabel = computed(
     () => ({ delegate: '被委派人', transfer: '新审批人', sign: '加签用户', copy: '抄送用户' })[actionType.value] || '用户'
   );
-  const selectableNextNodes = computed(() => nextApprovalNodes.value.filter((node) => node.candidateStrategy === 34 && !node.candidateUsers?.length));
+  const selectableNextNodes = computed(() => nextApprovalNodes.value.filter((node) => [34, 35].includes(node.candidateStrategy || 0) && !node.candidateUsers?.length));
   function canAction(buttonCode: number) {
     const enabled = detail.value?.enabledButtons;
     return !enabled || !enabled.length || enabled.includes(buttonCode);
@@ -414,6 +459,7 @@
         await approveTask({ ...base, variables: detailFormValue.value, nextAssignees: selected });
       }
       if (actionType.value === 'reject') await rejectTask(base);
+      if (actionType.value === 'skip') await skipTask(base);
       if (actionType.value === 'return') await returnTask({ ...base, targetTaskDefinitionKey: targetTaskDefinitionKey.value });
       if (actionType.value === 'delegate') await delegateTask({ ...base, delegateUserId: users[0] });
       if (actionType.value === 'transfer') await transferTask({ ...base, assigneeUserId: users[0] });
@@ -532,6 +578,7 @@
       {
         approve: '通过',
         reject: '拒绝',
+        skip: '跳过',
         return: '退回',
         delegate: '委派',
         transfer: '转办',
@@ -543,10 +590,6 @@
         comment: '评论',
       }[type || ''] || '流程记录'
     );
-  }
-
-  function printPage() {
-    window.print();
   }
 
   watch([processInstanceId, taskId], loadDetail, { immediate: true });
@@ -577,6 +620,13 @@
       margin-top: 4px;
       color: @text-color-secondary;
       font-size: 12px;
+    }
+
+    .timeline-reason {
+      margin-top: 4px;
+      color: @text-color-secondary;
+      font-size: 12px;
+      word-break: break-word;
     }
 
     .activity-task {

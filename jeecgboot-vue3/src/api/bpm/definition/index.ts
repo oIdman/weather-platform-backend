@@ -27,6 +27,7 @@ export interface BpmProcessDefinition {
   sort?: number;
   bpmnXml?: string;
   simpleModel?: string;
+  messageStartNames?: string[];
 }
 
 export const getProcessDefinition = (id?: string, key?: string) =>

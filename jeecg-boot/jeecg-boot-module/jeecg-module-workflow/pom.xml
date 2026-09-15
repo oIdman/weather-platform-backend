@@ -17,5 +17,6 @@
     <modules>
         <module>workflow-api</module>
         <module>workflow-biz</module>
+        <module>workflow-starter</module>
     </modules>
 </project>

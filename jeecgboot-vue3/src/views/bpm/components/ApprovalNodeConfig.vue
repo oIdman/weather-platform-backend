@@ -4,7 +4,7 @@
       <span>节点名称：</span>
       <a-input v-model:value="node.name" :maxlength="64" />
     </div>
-    <div class="approve-type-row">
+    <div v-if="!handlerMode" class="approve-type-row">
       <span>审批类型：</span>
       <a-radio-group v-model:value="node.approveType" button-style="solid">
         <a-radio-button :value="1">人工审批</a-radio-button>
@@ -13,31 +13,31 @@
       </a-radio-group>
     </div>
 
-    <a-tabs v-model:active-key="activeTab">
-      <a-tab-pane key="approver" tab="审批人">
-        <div v-if="node.approveType === 1">
-          <a-form-item label="审批人设置" required>
+    <a-tabs v-if="handlerMode || node.approveType === 1" v-model:active-key="activeTab">
+      <a-tab-pane key="approver" :tab="handlerMode ? '办理人' : '审批人'">
+        <div>
+          <a-form-item :label="handlerMode ? '办理人设置' : '审批人设置'" required>
             <a-radio-group v-model:value="node.candidateStrategy" class="strategy-grid" @change="normalizeCandidate">
               <a-radio v-for="item in candidateStrategies" :key="item.value" :value="item.value">{{ item.label }}</a-radio>
             </a-radio-group>
           </a-form-item>
 
           <a-form-item v-if="node.candidateStrategy === 30" label="指定用户" required>
-            <JSelectUser :value="node.candidateParam" row-key="id" label-key="realname" :multiple="true" @update:value="setCandidateValue" />
+            <JSelectUser :value="node.candidateParam" row-key="id" label-key="realname" multiple="multiple" @update:value="setCandidateValue" />
           </a-form-item>
           <a-form-item v-else-if="node.candidateStrategy === 10" label="指定角色" required>
-            <JSelectRole :value="node.candidateParam" row-key="roleCode" :multiple="true" @update:value="setCandidateValue" />
+            <JSelectRole :value="node.candidateParam" row-key="roleCode" multiple="multiple" @update:value="setCandidateValue" />
           </a-form-item>
           <template v-else-if="[20, 21, 23].includes(node.candidateStrategy)">
             <a-form-item label="指定部门" required>
-              <JSelectDept :value="candidateBaseParam" row-key="id" :multiple="true" @update:value="setCandidateBaseParam" />
+            <JSelectDept :value="candidateBaseParam" row-key="id" multiple="multiple" @update:value="setCandidateBaseParam" />
             </a-form-item>
             <a-form-item v-if="node.candidateStrategy === 23" label="连续部门层级">
               <a-input-number :value="candidateLevel" :min="1" :max="15" @update:value="setCandidateLevel" />
             </a-form-item>
           </template>
           <a-form-item v-else-if="node.candidateStrategy === 22" label="指定岗位" required>
-            <JSelectPosition :value="node.candidateParam" row-key="id" :multiple="true" @update:value="setCandidateValue" />
+            <JSelectPosition :value="node.candidateParam" row-key="id" multiple="multiple" @update:value="setCandidateValue" />
           </a-form-item>
           <a-form-item v-else-if="node.candidateStrategy === 40" label="指定用户组" required>
             <a-select v-model:value="userGroupParam" mode="multiple" :options="userGroupOptions" placeholder="请选择用户组" />
@@ -63,7 +63,7 @@
             <a-textarea v-model:value="node.candidateParam" :rows="3" placeholder="例如：${assigneeId}" />
           </a-form-item>
 
-          <a-form-item label="多人审批方式" required>
+          <a-form-item :label="handlerMode ? '多人办理方式' : '多人审批方式'" required>
             <a-radio-group v-model:value="node.approveMethod" class="vertical-radios">
               <a-radio :value="4">按顺序依次审批</a-radio>
               <a-radio :value="2">会签（可同时审批，达到通过比例后完成）</a-radio>
@@ -71,14 +71,14 @@
               <a-radio :value="1">随机挑选一人审批</a-radio>
             </a-radio-group>
           </a-form-item>
-          <a-form-item v-if="node.approveMethod === 2" label="会签通过比例" required>
+          <a-form-item v-if="!handlerMode && node.approveMethod === 2" label="会签通过比例" required>
             <a-input-number v-model:value="node.approveRatio" :min="1" :max="100" addon-after="%" />
           </a-form-item>
 
           <section class="setting-grid">
-            <div>
-              <a-divider orientation="left">审批人拒绝时</a-divider>
-              <a-radio-group v-model:value="node.rejectHandler.type" class="vertical-radios">
+            <div v-if="!handlerMode">
+              <a-divider v-if="!handlerMode" orientation="left">审批人拒绝时</a-divider>
+              <a-radio-group v-if="!handlerMode" v-model:value="node.rejectHandler.type" class="vertical-radios">
                 <a-radio :value="1">终止流程</a-radio>
                 <a-radio :value="2">驳回到指定节点</a-radio>
               </a-radio-group>
@@ -90,17 +90,17 @@
                 placeholder="请选择流程中的任务节点"
               />
             </div>
-            <div>
-              <a-divider orientation="left">审批人超时未处理时</a-divider>
-              <a-switch v-model:checked="node.timeoutHandler.enable" checked-children="开启" un-checked-children="关闭" />
-              <div v-if="node.timeoutHandler.enable" class="inline-settings">
+            <div v-if="!handlerMode">
+              <a-divider v-if="!handlerMode" orientation="left">审批人超时未处理时</a-divider>
+              <a-switch v-if="!handlerMode" v-model:checked="node.timeoutHandler.enable" checked-children="开启" un-checked-children="关闭" />
+              <div v-if="!handlerMode && node.timeoutHandler.enable" class="inline-settings">
                 <a-select v-model:value="node.timeoutHandler.type" :options="timeoutTypes" />
                 <a-input-number v-model:value="timeoutAmount" :min="1" />
                 <a-select v-model:value="timeoutUnit" :options="timeUnits" />
                 <a-input-number v-if="node.timeoutHandler.type === 1" v-model:value="node.timeoutHandler.maxRemindCount" :min="1" :max="99" addon-after="次" />
               </div>
             </div>
-            <div>
+            <div v-if="!handlerMode">
               <a-divider orientation="left">审批人与提交人为同一人时</a-divider>
               <a-radio-group v-model:value="node.assignStartUserHandlerType" class="vertical-radios">
                 <a-radio :value="1">由发起人对自己审批</a-radio>
@@ -109,7 +109,7 @@
               </a-radio-group>
             </div>
             <div>
-              <a-divider orientation="left">审批人为空时</a-divider>
+              <a-divider orientation="left">{{ handlerMode ? '办理人为空时' : '审批人为空时' }}</a-divider>
               <a-radio-group v-model:value="node.assignEmptyHandler.type" class="vertical-radios" @change="normalizeEmptyHandler">
                 <a-radio :value="1">自动通过</a-radio>
                 <a-radio :value="2">自动拒绝</a-radio>
@@ -122,25 +122,26 @@
                 class="section-control"
                 row-key="id"
                 label-key="realname"
-                :multiple="true"
+                multiple="multiple"
               />
             </div>
-            <div>
+            <div v-if="!handlerMode">
               <a-divider orientation="left">是否需要签名</a-divider>
               <a-switch v-model:checked="node.signEnable" checked-children="是" un-checked-children="否" />
             </div>
-            <div>
+            <div v-if="!handlerMode">
               <a-divider orientation="left">审批意见</a-divider>
               <a-switch v-model:checked="node.reasonRequire" checked-children="必填" un-checked-children="非必填" />
             </div>
           </section>
-          <a-divider orientation="left">跳过表达式</a-divider>
-          <a-textarea v-model:value="node.skipExpression" :rows="3" allow-clear placeholder="例如：${amount > 1000}" />
+          <template v-if="!handlerMode">
+            <a-divider orientation="left">跳过表达式</a-divider>
+            <a-textarea v-model:value="node.skipExpression" :rows="3" allow-clear placeholder="例如：${amount > 1000}" />
+          </template>
         </div>
-        <a-alert v-else :message="node.approveType === 2 ? '进入该节点后自动通过' : '进入该节点后自动拒绝'" type="info" show-icon />
       </a-tab-pane>
 
-      <a-tab-pane key="buttons" tab="操作按钮设置">
+      <a-tab-pane v-if="!handlerMode" key="buttons" tab="操作按钮设置">
         <h3>操作按钮</h3>
         <div class="setting-table">
           <div class="setting-table-row setting-table-head"><span>操作按钮</span><span>显示名称</span><span>启用</span></div>
@@ -213,7 +214,9 @@
   type SimpleNode = Record<string, any>;
   type FormFieldOption = { label: string; value: string };
 
-  const props = defineProps<{ node: SimpleNode; formFields: FormFieldOption[]; returnNodeOptions: FormFieldOption[] }>();
+  const props = withDefaults(defineProps<{ node: SimpleNode; formFields: FormFieldOption[]; returnNodeOptions: FormFieldOption[]; handlerMode?: boolean }>(), {
+    handlerMode: false,
+  });
   const activeTab = ref('approver');
   const userGroupOptions = ref<{ label: string; value: string }[]>([]);
   const candidateStrategies = [
@@ -223,7 +226,7 @@
     { label: '发起人部门负责人', value: 37 }, { label: '发起人连续部门负责人', value: 38 }, { label: '用户组', value: 40 },
     { label: '表单内用户字段', value: 50 }, { label: '表单内部门负责人', value: 51 }, { label: '流程表达式', value: 60 },
   ];
-  const buttonNames: Record<number, string> = { 1: '通过', 2: '拒绝', 3: '转办', 4: '委派', 5: '加签', 6: '退回' };
+  const buttonNames: Record<number, string> = { 1: '通过', 2: '拒绝', 3: '转办', 4: '委派', 5: '加签', 6: '退回', 7: '抄送', 8: '跳过' };
   const timeoutTypes = [{ label: '自动提醒', value: 1 }, { label: '自动同意', value: 2 }, { label: '自动拒绝', value: 3 }];
   const timeUnits = [{ label: '分钟', value: 'M' }, { label: '小时', value: 'H' }, { label: '天', value: 'D' }];
   const listenerTypes = [
@@ -264,7 +267,11 @@
   function setCandidateValue(value: string | string[]) { props.node.candidateParam = Array.isArray(value) ? value.join(',') : value; }
   function setCandidateBaseParam(value: string | string[]) {
     const base = Array.isArray(value) ? value.join(',') : value;
-    props.node.candidateParam = `${base || ''}|${candidateLevel.value}`;
+    // 部门成员（20）和部门负责人（21）只接受部门编号；只有连续多级
+    // 部门负责人（23）及表单内部门负责人（51）才需要携带“|层级”后缀。
+    props.node.candidateParam = [23, 51].includes(props.node.candidateStrategy)
+      ? `${base || ''}|${candidateLevel.value}`
+      : base || '';
   }
   function setCandidateLevel(value: number | null) {
     const level = value || 1;

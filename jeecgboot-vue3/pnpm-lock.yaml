@@ -294,9 +294,15 @@ importers:
       autoprefixer:
         specifier: ^10.5.2
         version: 10.5.2(postcss@8.5.16)
+      chalk:
+        specifier: ^4.1.2
+        version: 4.1.2
       big.js:
         specifier: ^6.2.2
         version: 6.2.2
+      clean-css:
+        specifier: ^5.3.3
+        version: 5.3.3
       commitizen:
         specifier: ^4.3.2
         version: 4.3.2(@types/node@20.19.43)(typescript@5.9.3)
@@ -312,6 +318,9 @@ importers:
       czg:
         specifier: ^1.13.1
         version: 1.13.1
+      debug:
+        specifier: ^4.4.3
+        version: 4.4.3(supports-color@8.1.1)
       dingtalk-jsapi:
         specifier: ^3.2.9
         version: 3.2.9

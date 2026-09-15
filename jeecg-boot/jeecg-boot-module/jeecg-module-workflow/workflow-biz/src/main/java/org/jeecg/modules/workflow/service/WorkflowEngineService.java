@@ -3,9 +3,11 @@ package org.jeecg.modules.workflow.service;
 import org.jeecg.modules.workflow.api.dto.WorkflowCancelRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowApprovalDetailRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowDeployRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowEventTriggerRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowPage;
 import org.jeecg.modules.workflow.api.dto.WorkflowProcessInstancePageRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowStartRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowStartEventRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskActionRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskDelegateRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskReturnRequest;
@@ -36,6 +38,9 @@ public interface WorkflowEngineService {
 
     String start(WorkflowStartRequest request);
 
+    /** 通过 BPMN 消息启动事件启动流程。 */
+    String startByMessageEvent(WorkflowStartEventRequest request);
+
     WorkflowPage<WorkflowInstanceVO> myProcessPage(WorkflowProcessInstancePageRequest request);
 
     WorkflowPage<WorkflowInstanceVO> managerProcessPage(WorkflowProcessInstancePageRequest request);
@@ -64,6 +69,9 @@ public interface WorkflowEngineService {
 
     void reject(WorkflowTaskActionRequest request);
 
+    /** Skip the current user task and continue the process as an approved transition. */
+    void skipTask(WorkflowTaskActionRequest request);
+
     /** Internal runtime hook used by automatic node assignment rules; it is not exposed as a web API. */
     void completeAutomatically(String taskId, boolean approved, String reason);
 
@@ -84,6 +92,9 @@ public interface WorkflowEngineService {
     void withdrawTask(String taskId);
 
     void triggerCallback(String processInstanceId, String taskDefineKey);
+
+    /** 触发流程实例上的消息或信号事件订阅，返回实际触发的订阅数量。 */
+    int triggerEvent(WorkflowEventTriggerRequest request);
 
     void deleteHistoricProcessInstance(String processInstanceId);
 }

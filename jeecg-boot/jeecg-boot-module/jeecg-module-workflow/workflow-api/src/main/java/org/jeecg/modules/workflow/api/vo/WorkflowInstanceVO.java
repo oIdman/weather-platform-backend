@@ -17,6 +17,7 @@ public class WorkflowInstanceVO {
     private String categoryName;
     private String startUserId;
     private String startUserName;
+    private String startUserDeptName;
     private Date startTime;
     private Date endTime;
     private String status;

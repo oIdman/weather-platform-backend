@@ -64,7 +64,7 @@ mvn -f jeecg-boot/jeecg-module-system/jeecg-system-start/pom.xml -Pdev spring-bo
 org.jeecg.JeecgSystemApplication
 ```
 
-默认后端地址为 `http://localhost:8080/jeecg-boot`。
+默认后端地址为 `http://localhost:8880/jeecg-boot`。
 
 ### 2.3 启动前端
 
@@ -73,7 +73,7 @@ pnpm --dir jeecgboot-vue3 install
 pnpm --dir jeecgboot-vue3 dev
 ```
 
-默认开发端口为 3100。确认 `jeecgboot-vue3/.env.development` 中代理和 `VITE_GLOB_DOMAIN_URL` 指向当前后端；单体通常是 `http://localhost:8080/jeecg-boot`。
+默认开发端口为 3111。确认 `jeecgboot-vue3/.env.development` 中代理和 `VITE_GLOB_DOMAIN_URL` 指向当前后端；单体通常是 `http://localhost:8880/jeecg-boot`。
 
 ## 3. Docker 单体启动
 

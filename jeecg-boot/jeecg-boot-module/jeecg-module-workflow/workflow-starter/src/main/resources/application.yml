@@ -1,0 +1,35 @@
+server:
+  port: 8890
+
+spring:
+  application:
+    name: jeecg-workflow-service
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/jeecg_boot?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: change-me
+  sql:
+    init:
+      mode: never
+
+flowable:
+  database-schema-update: true
+  check-process-definitions: false
+
+jeecg:
+  workflow:
+    standalone:
+      user-id: workflow-system
+      username: workflow-system
+      display-name: Workflow System
+      tenant-id: '0'
+      role-codes: [workflow-admin]
+      department-ids: [workflow-root]
+      user-names:
+        workflow-system: Workflow System
+      role-users:
+        workflow-admin: [workflow-system]
+      department-users:
+        workflow-root: [workflow-system]
+      department-names:
+        workflow-root: Workflow Root

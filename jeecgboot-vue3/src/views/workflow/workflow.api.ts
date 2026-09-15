@@ -24,6 +24,7 @@ export interface WorkflowDefinition {
   icon?: string;
   description?: string;
   visible?: boolean;
+  messageStartNames?: string[];
 }
 
 export interface WorkflowTask {
@@ -119,6 +120,26 @@ export interface WorkflowApprovalDetail {
   todoTask?: WorkflowTask;
   processDefinition?: WorkflowDefinition;
   bpmnModelView?: WorkflowBpmnView;
+  copies?: WorkflowProcessCopy[];
+  timelineEvents?: WorkflowTimelineEvent[];
+}
+
+export interface WorkflowTimelineEvent {
+  id: string;
+  activityId?: string;
+  name: string;
+  type: string;
+  executionId?: string;
+  processInstanceId?: string;
+  startTime?: string;
+  endTime?: string;
+  durationInMillis?: number;
+  status?: number;
+  taskId?: string;
+  assignee?: string;
+  assigneeName?: string;
+  resultStatus?: number;
+  reason?: string;
 }
 
 export interface WorkflowApprovalDetailRequest {
@@ -128,6 +149,22 @@ export interface WorkflowApprovalDetailRequest {
   processInstanceId?: string;
   activityId?: string;
   taskId?: string;
+}
+
+export interface WorkflowStartEventRequest {
+  messageName: string;
+  businessKey?: string;
+  processInstanceName?: string;
+  variables?: Record<string, unknown>;
+  startUserSelectAssignees?: Record<string, string[]>;
+}
+
+export interface WorkflowEventTriggerRequest {
+  /** 消息事件必填；信号事件为空时向当前租户广播。 */
+  processInstanceId?: string;
+  eventType: 'message' | 'signal';
+  eventName: string;
+  variables?: Record<string, unknown>;
 }
 
 export interface WorkflowUserSimple {
@@ -146,6 +183,11 @@ export interface WorkflowActivityNode {
   startTime?: string;
   endTime?: string;
   tasks?: WorkflowTask[];
+  multiInstance?: boolean;
+  instanceCount?: number;
+  completedInstanceCount?: number;
+  activeInstanceCount?: number;
+  completionPercent?: number;
   candidateStrategy?: number;
   candidateUsers?: WorkflowUserSimple[];
   processInstanceId?: string;
@@ -175,7 +217,12 @@ export const approveTask = (data) => defHttp.put({ url: '/bpm/task/approve', dat
 
 export const rejectTask = (data) => defHttp.put({ url: '/bpm/task/reject', data });
 
+export const skipTask = (data) => defHttp.put({ url: '/bpm/task/skip', data });
+
 export const copyTask = (data) => defHttp.put({ url: '/bpm/task/copy', data });
+export const triggerCallback = (processInstanceId: string, taskDefineKey: string) =>
+  defHttp.put({ url: '/bpm/task/trigger-callback', params: { processInstanceId, taskDefineKey } });
+export const triggerEvent = (data: WorkflowEventTriggerRequest) => defHttp.put({ url: '/bpm/task/trigger-event', data });
 
 export const getTaskListByReturn = (id: string) => defHttp.get<WorkflowTask[]>({ url: '/bpm/task/list-by-return', params: { id } });
 export const returnTask = (data) => defHttp.put({ url: '/bpm/task/return', data });
@@ -198,6 +245,9 @@ export const getManagerProcessPage = (params) =>
     .then(toTablePage);
 
 export const startProcess = (data) => defHttp.post({ url: '/bpm/process-instance/create', data });
+
+export const startProcessByMessage = (data: WorkflowStartEventRequest) =>
+  defHttp.post({ url: '/bpm/process-instance/start-by-message', data });
 
 export const getProcessInstance = (id: string) => defHttp.get<WorkflowInstance>({ url: '/bpm/process-instance/get', params: { id } });
 

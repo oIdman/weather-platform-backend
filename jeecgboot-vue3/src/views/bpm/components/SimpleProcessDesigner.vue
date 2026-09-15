@@ -8,12 +8,20 @@
       <a-button aria-label="放大" @click="zoom = Math.min(150, zoom + 10)">＋</a-button>
     </div>
     <main class="canvas">
-      <div :style="{ zoom: zoom / 100 }"><SimpleProcessTree :node="localModel" :selected-id="propertiesOpen ? selectedNode?.id : ''" @select="selectNode" @add="insertAfter" /></div>
+      <div :style="{ zoom: zoom / 100 }">
+        <SimpleProcessTree
+          :node="localModel"
+          :selected-id="propertiesOpen ? selectedNode?.id : ''"
+          @select="selectNode"
+          @add="insertAfter"
+          @delete="deleteNode"
+        />
+      </div>
     </main>
     <a-drawer
       v-model:open="propertiesOpen"
       :title="selectedNode?.name || '节点配置'"
-      :width="selectedNode?.type === 11 ? 1040 : 420"
+      :width="[11, 13].includes(selectedNode?.type) ? 1040 : selectedNode?.type === 10 ? 620 : 420"
       :z-index="1100"
     >
       <template v-if="selectedNode">
@@ -24,13 +32,22 @@
           <a-form-item v-if="selectedNode.type !== 11" label="节点名称"><a-input v-model:value="selectedNode.name" :disabled="[1, 10].includes(selectedNode.type)" /></a-form-item>
 
           <ApprovalNodeConfig
-            v-if="selectedNode.type === 11"
+            v-if="[11, 13].includes(selectedNode.type)"
             :node="selectedNode"
             :form-fields="formFields"
             :return-node-options="returnNodeOptions"
+            :handler-mode="selectedNode.type === 13"
           />
 
-          <template v-else-if="[12, 13].includes(selectedNode.type)">
+          <StartUserNodeConfig
+            v-else-if="selectedNode.type === 10"
+            :node="selectedNode"
+            :form-fields="formFields"
+            :start-user-ids="startUserIds"
+            :start-dept-ids="startDeptIds"
+          />
+
+          <template v-else-if="selectedNode.type === 12">
             <a-form-item label="候选人策略">
               <a-select v-model:value="selectedNode.candidateStrategy" :options="candidateStrategies" @change="normalizeCandidate" />
             </a-form-item>
@@ -41,21 +58,21 @@
               <a-textarea v-model:value="selectedNode.candidateParam" :rows="3" placeholder="例如：${assigneeId}" />
             </a-form-item>
             <a-form-item v-else-if="selectedNode.candidateStrategy === 30" label="指定成员">
-              <JSelectUser :value="selectedNode.candidateParam" row-key="id" label-key="realname" :multiple="true" @update:value="setCandidateUsers" />
+              <JSelectUser :value="selectedNode.candidateParam" row-key="id" label-key="realname" multiple="multiple" @update:value="setCandidateUsers" />
             </a-form-item>
             <a-form-item v-else-if="selectedNode.candidateStrategy === 10" label="指定角色">
-              <JSelectRole :value="selectedNode.candidateParam" row-key="roleCode" :multiple="true" @update:value="setCandidateValue" />
+              <JSelectRole :value="selectedNode.candidateParam" row-key="roleCode" multiple="multiple" @update:value="setCandidateValue" />
             </a-form-item>
             <template v-else-if="[20, 21, 23].includes(selectedNode.candidateStrategy)">
               <a-form-item label="指定部门">
-                <JSelectDept :value="candidateBaseParam()" row-key="id" :multiple="true" @update:value="setCandidateBaseParam" />
+                <JSelectDept :value="candidateBaseParam()" row-key="id" multiple="multiple" @update:value="setCandidateBaseParam" />
               </a-form-item>
               <a-form-item v-if="selectedNode.candidateStrategy === 23" label="连续部门层级">
                 <a-input-number :value="candidateLevel()" :min="1" style="width: 100%" @update:value="setCandidateLevel" />
               </a-form-item>
             </template>
             <a-form-item v-else-if="selectedNode.candidateStrategy === 22" label="指定岗位">
-              <JSelectPosition :value="selectedNode.candidateParam" row-key="id" :multiple="true" @update:value="setCandidateValue" />
+              <JSelectPosition :value="selectedNode.candidateParam" row-key="id" multiple="multiple" @update:value="setCandidateValue" />
             </a-form-item>
             <a-form-item v-else-if="[37, 38].includes(selectedNode.candidateStrategy)" label="部门层级">
               <a-input-number :value="candidateLevel()" :min="1" style="width: 100%" @update:value="setCandidateLevel" />
@@ -103,7 +120,7 @@
                   v-model:value="selectedNode.assignEmptyHandler.userIds"
                   row-key="id"
                   label-key="realname"
-                  :multiple="true"
+                  multiple="multiple"
                 />
               </a-form-item>
             </template>
@@ -206,13 +223,28 @@
             </a-form-item>
           </template>
 
-          <template v-if="selectedNode.type === 15">
-            <a-form-item label="触发器类型">
-              <a-select v-model:value="selectedNode.triggerSetting.type" :options="triggerTypes" />
-            </a-form-item>
-            <a-form-item label="请求地址">
+           <template v-if="selectedNode.type === 15">
+             <a-form-item label="触发器类型">
+              <a-select v-model:value="selectedNode.triggerSetting.type" :options="triggerTypes" @change="normalizeTriggerSetting" />
+             </a-form-item>
+            <a-form-item v-if="[1, 2].includes(selectedNode.triggerSetting.type)" label="请求地址">
               <a-input v-model:value="selectedNode.triggerSetting.httpRequestSetting.url" placeholder="https://example.com/callback" />
             </a-form-item>
+            <template v-if="[1, 2].includes(selectedNode.triggerSetting.type)">
+              <HttpSettingRows v-model="selectedNode.triggerSetting.httpRequestSetting.header" label="请求头" />
+              <HttpSettingRows v-model="selectedNode.triggerSetting.httpRequestSetting.body" label="请求体" />
+              <TriggerResponseRows
+                v-if="selectedNode.triggerSetting.type === 1"
+                v-model="selectedNode.triggerSetting.httpRequestSetting.response"
+                label="响应字段映射"
+              />
+            </template>
+            <TriggerFormSettings
+              v-else
+              v-model="selectedNode.triggerSetting.formSettings"
+              :mode="selectedNode.triggerSetting.type === 10 ? 'update' : 'delete'"
+              :form-fields="formFields"
+            />
           </template>
 
           <template v-if="selectedNode.type === 20">
@@ -224,6 +256,26 @@
             </a-form-item>
             <a-form-item label="异步启动">
               <a-switch v-model:checked="selectedNode.childProcessSetting.async" />
+            </a-form-item>
+            <a-form-item label="跳过子流程发起人节点">
+              <a-switch v-model:checked="selectedNode.childProcessSetting.skipStartUserNode" checked-children="跳过" un-checked-children="不跳过" />
+            </a-form-item>
+            <a-divider orientation="left">子流程发起人</a-divider>
+            <a-form-item label="发起人来源">
+              <a-select v-model:value="selectedNode.childProcessSetting.startUserSetting.type" :options="[
+                { label: '同主流程发起人', value: 1 },
+                { label: '表单用户字段', value: 2 },
+              ]" />
+            </a-form-item>
+            <a-form-item v-if="selectedNode.childProcessSetting.startUserSetting.type === 2" label="用户字段" required>
+              <a-select v-model:value="selectedNode.childProcessSetting.startUserSetting.formField" :options="formFields" show-search option-filter-prop="label" placeholder="请选择用户字段" />
+            </a-form-item>
+            <a-form-item v-if="selectedNode.childProcessSetting.startUserSetting.type === 2" label="字段为空时">
+              <a-select v-model:value="selectedNode.childProcessSetting.startUserSetting.emptyType" :options="[
+                { label: '同主流程发起人', value: 1 },
+                { label: '子流程管理员', value: 2 },
+                { label: '主流程管理员', value: 3 },
+              ]" />
             </a-form-item>
             <a-form-item label="输入变量 JSON">
               <a-textarea
@@ -241,6 +293,44 @@
                 placeholder='例如：[{"source":"result","target":"subResult"}]'
               />
             </a-form-item>
+            <a-divider orientation="left">子流程超时</a-divider>
+            <a-form-item label="启用超时处理">
+              <a-switch v-model:checked="selectedNode.childProcessSetting.timeoutSetting.enable" checked-children="启用" un-checked-children="关闭" />
+            </a-form-item>
+            <template v-if="selectedNode.childProcessSetting.timeoutSetting.enable">
+              <a-form-item label="超时类型">
+                <a-select v-model:value="selectedNode.childProcessSetting.timeoutSetting.type" :options="[
+                  { label: '固定时长', value: 1 },
+                  { label: '固定日期时间', value: 2 },
+                ]" />
+              </a-form-item>
+              <a-form-item label="超时时间表达式" required>
+                <a-input v-model:value="selectedNode.childProcessSetting.timeoutSetting.timeExpression" placeholder="例如 PT2H 或 2026-10-01T18:00:00" />
+              </a-form-item>
+            </template>
+            <a-divider orientation="left">子流程多实例</a-divider>
+            <a-form-item label="启用多实例">
+              <a-switch v-model:checked="selectedNode.childProcessSetting.multiInstanceSetting.enable" checked-children="启用" un-checked-children="关闭" />
+            </a-form-item>
+            <template v-if="selectedNode.childProcessSetting.multiInstanceSetting.enable">
+              <a-form-item label="是否串行">
+                <a-switch v-model:checked="selectedNode.childProcessSetting.multiInstanceSetting.sequential" checked-children="是" un-checked-children="否" />
+              </a-form-item>
+              <a-form-item label="完成比例">
+                <a-input-number v-model:value="selectedNode.childProcessSetting.multiInstanceSetting.approveRatio" :min="1" :max="100" addon-after="%" style="width: 100%" />
+              </a-form-item>
+              <a-form-item label="实例来源">
+                <a-select v-model:value="selectedNode.childProcessSetting.multiInstanceSetting.sourceType" :options="[
+                  { label: '固定数量', value: 1 },
+                  { label: '数字表单字段', value: 2 },
+                  { label: '多选表单字段', value: 3 },
+                ]" />
+              </a-form-item>
+              <a-form-item label="实例数量/字段" required>
+                <a-input-number v-if="selectedNode.childProcessSetting.multiInstanceSetting.sourceType === 1" v-model:value="selectedNode.childProcessSetting.multiInstanceSetting.source" :min="1" style="width: 100%" />
+                <a-select v-else v-model:value="selectedNode.childProcessSetting.multiInstanceSetting.source" :options="formFields" show-search option-filter-prop="label" placeholder="请选择表单字段" />
+              </a-form-item>
+            </template>
           </template>
 
           <template v-if="selectedNode.type === 50">
@@ -260,10 +350,10 @@
           <template v-if="isBranch(selectedNode.type)">
             <a-divider orientation="left">分支管理</a-divider>
             <a-space direction="vertical" style="width: 100%">
-              <div v-for="branch in selectedNode.conditionNodes" :key="branch.id" class="branch-row">
+              <div v-for="(branch, index) in selectedNode.conditionNodes" :key="branch.id" class="branch-row">
                 <a-input v-model:value="branch.name" />
                 <a-button size="small" @click="selectNode(branch)">配置</a-button>
-                <a-button size="small" danger :disabled="selectedNode.conditionNodes.length <= 2" @click="removeBranch(branch)">删除</a-button>
+                <a-button size="small" danger :disabled="selectedNode.conditionNodes.length <= 2 || isProtectedBranch(branch, index)" @click="removeBranch(branch)">删除</a-button>
               </div>
               <a-button block type="dashed" @click="addBranch">添加分支</a-button>
             </a-space>
@@ -271,7 +361,7 @@
         </a-form>
       </template>
       <a-empty v-else description="请选择流程节点" />
-      <template #footer><a-space><a-button danger :disabled="!canDelete" @click="deleteSelected(); propertiesOpen = false">删除节点</a-button><a-button type="primary" @click="propertiesOpen = false">确定</a-button></a-space></template>
+      <template #footer><a-space><a-button type="primary" @click="propertiesOpen = false">确定</a-button></a-space></template>
     </a-drawer>
   </div>
 </template>
@@ -280,6 +370,10 @@
   import { computed, ref, watch } from 'vue';
   import ApprovalNodeConfig from './ApprovalNodeConfig.vue';
   import SimpleProcessTree from './SimpleProcessTree.vue';
+  import StartUserNodeConfig from './StartUserNodeConfig.vue';
+  import TriggerFormSettings from './TriggerFormSettings.vue';
+  import TriggerResponseRows from './TriggerResponseRows.vue';
+  import HttpSettingRows from '../model/HttpSettingRows.vue';
   import JSelectDept from '/@/components/Form/src/jeecg/components/JSelectDept.vue';
   import JSelectPosition from '/@/components/Form/src/jeecg/components/JSelectPosition.vue';
   import JSelectRole from '/@/components/Form/src/jeecg/components/JSelectRole.vue';
@@ -291,7 +385,15 @@
 
   type SimpleNode = Record<string, any>;
 
-  const props = withDefaults(defineProps<{ modelValue?: SimpleNode; formFields?: { label: string; value: string }[] }>(), { formFields: () => [] });
+  const props = withDefaults(
+    defineProps<{
+      modelValue?: SimpleNode;
+      formFields?: { label: string; value: string }[];
+      startUserIds?: string[];
+      startDeptIds?: string[];
+    }>(),
+    { formFields: () => [], startUserIds: () => [], startDeptIds: () => [] }
+  );
   const emit = defineEmits<{ 'update:modelValue': [value: SimpleNode] }>();
 
   const candidateStrategies = [
@@ -325,6 +427,7 @@
     { label: '加签', value: 5 },
     { label: '退回', value: 6 },
     { label: '抄送', value: 7 },
+    { label: '跳过', value: 8 },
   ];
   const typeNames: Record<number, string> = {
     1: '结束',
@@ -458,6 +561,7 @@
     node.childNode = next;
     current.childNode = node;
     selectedNode.value = node;
+    ensureNodeSettings(node);
   }
 
   function createNode(type: number): SimpleNode {
@@ -470,7 +574,7 @@
         approveType: 1,
         approveMethod: 4,
         approveRatio: 100,
-        enabledButtons: [1, 2, 3, 4, 5, 6],
+        enabledButtons: [1, 2, 3, 4, 5, 6, 8],
         buttonsSetting: defaultButtonSettings(),
         fieldsPermission: [],
         reasonRequire: false,
@@ -488,9 +592,19 @@
     } else if (type === 14) {
       node.delaySetting = { delayType: 1, duration: 'PT30M' };
     } else if (type === 15) {
-      node.triggerSetting = { type: 1, httpRequestSetting: { url: '' } };
+      node.triggerSetting = { type: 1, httpRequestSetting: { url: '', header: [], body: [], response: [] } };
     } else if (type === 20) {
-      node.childProcessSetting = { calledProcessDefinitionKey: '', async: false, inVariables: '[]', outVariables: '[]' };
+      node.childProcessSetting = {
+        calledProcessDefinitionKey: '',
+        calledProcessDefinitionName: '',
+        async: false,
+        skipStartUserNode: false,
+        startUserSetting: { type: 1, emptyType: 1, formField: '' },
+        timeoutSetting: { enable: false, type: 1, timeExpression: 'PT1H' },
+        multiInstanceSetting: { enable: false, sequential: false, approveRatio: 100, sourceType: 1, source: '' },
+        inVariables: '[]',
+        outVariables: '[]',
+      };
     } else if (isBranch(type)) {
       node.conditionNodes = [createBranch(1, false), createBranch(2, true)];
     }
@@ -524,10 +638,8 @@
       node.assignStartUserHandlerType ||= 1;
       node.signEnable ||= false;
       node.approveType ||= 1;
-      node.buttonsSetting ||= defaultButtonSettings().map((item) => ({
-        ...item,
-        enable: !Array.isArray(node.enabledButtons) || node.enabledButtons.includes(item.id),
-      }));
+      node.buttonsSetting = normalizeButtonSettings(node.buttonsSetting, node.enabledButtons);
+      node.enabledButtons = node.buttonsSetting.filter((item: any) => item.enable).map((item: any) => item.id);
       node.fieldsPermission = normalizeFieldPermissions(node.fieldsPermission);
       node.taskCreateListener ||= { enable: false, path: '', header: [], body: [] };
       node.taskAssignListener ||= { enable: false, path: '', header: [], body: [] };
@@ -538,13 +650,40 @@
       node.timeoutHandler.maxRemindCount ||= 1;
       if ([37, 38].includes(node.candidateStrategy) && !node.candidateParam) node.candidateParam = '1';
     }
+    if (node.type === 10) {
+      node.fieldsPermission = normalizeFieldPermissions(node.fieldsPermission);
+      node.buttonsSetting ||= defaultStartButtonSettings();
+    }
     if (node.type === 14) node.delaySetting ||= { delayType: 1, duration: 'PT30M' };
     if (node.type === 15) {
       node.triggerSetting ||= { type: 1 };
-      node.triggerSetting.httpRequestSetting ||= { url: '' };
+      if ([1, 2].includes(node.triggerSetting.type)) {
+        node.triggerSetting.httpRequestSetting ||= { url: '', header: [], body: [], response: [] };
+        node.triggerSetting.httpRequestSetting.header ||= [];
+        node.triggerSetting.httpRequestSetting.body ||= [];
+        node.triggerSetting.httpRequestSetting.response ||= [];
+      } else {
+        node.triggerSetting.formSettings ||= [{ updateFormFields: {}, deleteFields: [] }];
+      }
     }
     if (node.type === 20) {
-      node.childProcessSetting ||= { calledProcessDefinitionKey: '', async: false };
+      node.childProcessSetting ||= { calledProcessDefinitionKey: '', calledProcessDefinitionName: '', async: false };
+      node.childProcessSetting.calledProcessDefinitionName ||= '';
+      node.childProcessSetting.skipStartUserNode ??= false;
+      node.childProcessSetting.startUserSetting ||= { type: 1, emptyType: 1, formField: '' };
+      node.childProcessSetting.startUserSetting.type ||= 1;
+      node.childProcessSetting.startUserSetting.emptyType ||= 1;
+      node.childProcessSetting.startUserSetting.formField ||= '';
+      node.childProcessSetting.timeoutSetting ||= { enable: false, type: 1, timeExpression: 'PT1H' };
+      node.childProcessSetting.timeoutSetting.enable ??= false;
+      node.childProcessSetting.timeoutSetting.type ||= 1;
+      node.childProcessSetting.timeoutSetting.timeExpression ||= 'PT1H';
+      node.childProcessSetting.multiInstanceSetting ||= { enable: false, sequential: false, approveRatio: 100, sourceType: 1, source: '' };
+      node.childProcessSetting.multiInstanceSetting.enable ??= false;
+      node.childProcessSetting.multiInstanceSetting.sequential ??= false;
+      node.childProcessSetting.multiInstanceSetting.approveRatio ||= 100;
+      node.childProcessSetting.multiInstanceSetting.sourceType ||= 1;
+      node.childProcessSetting.multiInstanceSetting.source ||= '';
       node.childProcessSetting.inVariables ||= '[]';
       node.childProcessSetting.outVariables ||= '[]';
     }
@@ -578,6 +717,13 @@
     }
   }
 
+  function deleteNode(node: SimpleNode) {
+    if (![11, 12, 13, 14, 15, 20, 51, 52, 53, 54].includes(node.type)) return;
+    selectedNode.value = node;
+    deleteSelected();
+    propertiesOpen.value = false;
+  }
+
   function addBranch() {
     if (!selectedNode.value || !isBranch(selectedNode.value.type)) return;
     const branch = createBranch(selectedNode.value.conditionNodes.length + 1, false);
@@ -587,7 +733,14 @@
 
   function removeBranch(branch: SimpleNode) {
     if (!selectedNode.value || !isBranch(selectedNode.value.type) || selectedNode.value.conditionNodes.length <= 2) return;
+    const index = selectedNode.value.conditionNodes.indexOf(branch);
+    if (index < 0 || isProtectedBranch(branch, index)) return;
     selectedNode.value.conditionNodes = selectedNode.value.conditionNodes.filter((item: SimpleNode) => item !== branch);
+  }
+
+  function isProtectedBranch(branch: SimpleNode, index: number) {
+    if (!selectedNode.value?.conditionNodes?.length) return true;
+    return index === selectedNode.value.conditionNodes.length - 1 || branch.conditionSetting?.defaultFlow === true;
   }
 
   function markDefaultBranch(checked: boolean) {
@@ -623,7 +776,11 @@
   }
 
   function defaultButtonSettings() {
-    return buttonOptions.map((item) => ({ id: item.value, displayName: item.label, enable: item.value <= 6 }));
+    return buttonOptions.map((item) => ({ id: item.value, displayName: item.label, enable: item.value <= 6 || item.value === 8 }));
+  }
+
+  function defaultStartButtonSettings() {
+    return [{ id: 1, displayName: '提交', enable: true }];
   }
 
   function normalizeFieldPermissions(value: unknown) {
@@ -634,6 +791,55 @@
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
+    }
+  }
+
+  function normalizeButtonSettings(value: unknown, enabledButtons: unknown) {
+    let parsed: any[] = [];
+    if (Array.isArray(value)) {
+      parsed = value;
+    } else if (typeof value === 'string' && value.trim()) {
+      try {
+        const candidate = JSON.parse(value);
+        if (Array.isArray(candidate)) parsed = candidate;
+      } catch {
+        // 非法高级配置退回默认按钮，保存时由向导校验提示用户修正。
+      }
+    }
+    const enabled = Array.isArray(enabledButtons) ? enabledButtons.map(Number) : null;
+    const existing = new Map(parsed.map((item: any) => [Number(item?.id), item]));
+    return defaultButtonSettings().map((item) => {
+      const configured = existing.get(item.id);
+      return {
+        ...item,
+        ...(configured || {}),
+        id: item.id,
+        enable: configured?.enable !== undefined ? Boolean(configured.enable) : enabled ? enabled.includes(item.id) : item.enable,
+      };
+    });
+  }
+
+  function normalizeTriggerSetting() {
+    const setting = selectedNode.value?.triggerSetting;
+    if (!setting) return;
+    if ([1, 2].includes(setting.type)) {
+      setting.httpRequestSetting ||= { url: '', header: [], body: [], response: [] };
+      setting.httpRequestSetting.header ||= [];
+      setting.httpRequestSetting.body ||= [];
+      setting.httpRequestSetting.response ||= [];
+      delete setting.formSettings;
+    } else {
+      setting.formSettings ||= [{ updateFormFields: {}, deleteFields: [] }];
+      setting.formSettings.forEach((formSetting: SimpleNode) => {
+        if (setting.type === 10) {
+          delete formSetting.deleteFields;
+          formSetting.updateFormFields ||= {};
+        } else {
+          delete formSetting.updateFormFields;
+          formSetting.deleteFields ||= [];
+        }
+      });
+      delete setting.httpRequestSetting;
     }
   }
 </script>

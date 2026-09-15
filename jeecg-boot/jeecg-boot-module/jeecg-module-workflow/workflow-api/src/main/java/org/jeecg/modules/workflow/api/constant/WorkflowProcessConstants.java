@@ -26,8 +26,13 @@ public final class WorkflowProcessConstants {
     public static final String EXTENSION_SIGN_ENABLE = "signEnable";
     public static final String EXTENSION_REASON_REQUIRE = "reasonRequire";
     public static final String EXTENSION_FORM_FIELD_PERMISSION = "formFieldsPermission";
+    public static final String EXTENSION_CHILD_PROCESS_START_USER_SETTING = "childProcessStartUserSetting";
+    public static final String EXTENSION_CHILD_PROCESS_MULTI_INSTANCE_SOURCE_TYPE = "childProcessMultiInstanceSourceType";
     public static final String EXTENSION_BOUNDARY_EVENT_TYPE = "boundaryEventType";
     public static final String EXTENSION_TIMEOUT_HANDLER_TYPE = "timeoutHandlerType";
+
+    /** Passed into a called process so its start-user node can be skipped when configured. */
+    public static final String VARIABLE_SKIP_START_USER_NODE = "PROCESS_SKIP_START_USER_NODE";
 
     public static final int ASSIGN_EMPTY_APPROVE = 1;
     public static final int ASSIGN_EMPTY_REJECT = 2;
@@ -60,6 +65,8 @@ public final class WorkflowProcessConstants {
     public static final int TASK_STATUS_APPROVING = 7;
     public static final int TASK_STATUS_SKIPPED = -2;
     public static final int BOUNDARY_EVENT_USER_TASK_TIMEOUT = 1;
+    public static final int BOUNDARY_EVENT_DELAY_TIMER_TIMEOUT = 2;
+    public static final int BOUNDARY_EVENT_CHILD_PROCESS_TIMEOUT = 3;
     public static final int TIMEOUT_HANDLER_REMINDER = 1;
     public static final int TIMEOUT_HANDLER_APPROVE = 2;
     public static final int TIMEOUT_HANDLER_REJECT = 3;

@@ -29,6 +29,11 @@ public class WorkflowProcessInstanceEventListener extends AbstractFlowableEngine
 
     @Override
     protected void processCompleted(FlowableEngineEntityEvent event) {
+        // 流程模型清理时，删除动作可能携带完成事件；此时不得再向已挂起或
+        // 正在删除的流程实例补写状态变量。
+        if (WorkflowProcessCleanupContext.isActive()) {
+            return;
+        }
         ProcessInstance instance = (ProcessInstance) event.getEntity();
         Map<String, Object> variables = instance.getProcessVariables();
         Object status = variables == null ? null : variables.get(WorkflowProcessConstants.VARIABLE_STATUS);

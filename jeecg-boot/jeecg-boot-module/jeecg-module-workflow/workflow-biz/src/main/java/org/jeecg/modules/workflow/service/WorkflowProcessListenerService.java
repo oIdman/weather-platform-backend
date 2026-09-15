@@ -2,6 +2,8 @@ package org.jeecg.modules.workflow.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import org.flowable.engine.delegate.ExecutionListener;
+import org.flowable.engine.delegate.TaskListener;
 import org.jeecg.common.exception.JeecgBootException;
 import org.jeecg.modules.workflow.adapter.WorkflowIdentityAdapter;
 import org.jeecg.modules.workflow.api.dto.WorkflowPage;
@@ -84,7 +86,48 @@ public class WorkflowProcessListenerService extends WorkflowMetadataServiceSuppo
         entity.setEvent(request.getEvent());
         entity.setValueType(request.getValueType());
         entity.setValue(request.getValue().trim());
+        validateImplementation(entity);
         return entity;
+    }
+
+    /**
+     * Validate templates before they are selected into a BPMN definition. Without this check a
+     * typo is only reported much later, when Flowable tries to deploy or start a process.
+     */
+    private void validateImplementation(WorkflowProcessListener listener) {
+        if (!("execution".equalsIgnoreCase(listener.getType()) || "task".equalsIgnoreCase(listener.getType()))) {
+            throw new JeecgBootException("监听器类型只支持 execution 或 task");
+        }
+        boolean validEvent = "execution".equalsIgnoreCase(listener.getType())
+                ? ("start".equalsIgnoreCase(listener.getEvent()) || "end".equalsIgnoreCase(listener.getEvent())
+                || "take".equalsIgnoreCase(listener.getEvent()))
+                : ("create".equalsIgnoreCase(listener.getEvent()) || "assignment".equalsIgnoreCase(listener.getEvent())
+                || "complete".equalsIgnoreCase(listener.getEvent()) || "delete".equalsIgnoreCase(listener.getEvent())
+                || "update".equalsIgnoreCase(listener.getEvent()) || "timeout".equalsIgnoreCase(listener.getEvent()));
+        if (!validEvent) {
+            throw new JeecgBootException("监听事件与监听器类型不匹配");
+        }
+        if ("class".equalsIgnoreCase(listener.getValueType())) {
+            try {
+                Class<?> implementation = Class.forName(listener.getValue());
+                boolean valid = "execution".equalsIgnoreCase(listener.getType())
+                        ? ExecutionListener.class.isAssignableFrom(implementation)
+                        : TaskListener.class.isAssignableFrom(implementation);
+                if (!valid) {
+                    throw new JeecgBootException("执行监听器必须实现 " + ExecutionListener.class.getName()
+                            + "，任务监听器必须实现 " + TaskListener.class.getName());
+                }
+            } catch (ClassNotFoundException exception) {
+                throw new JeecgBootException("监听器类不存在：" + listener.getValue());
+            }
+            return;
+        }
+        String value = listener.getValue();
+        if (!("expression".equalsIgnoreCase(listener.getValueType())
+                || "delegateExpression".equalsIgnoreCase(listener.getValueType()))
+                || !value.startsWith("${") || !value.endsWith("}")) {
+            throw new JeecgBootException("监听器表达式必须使用 ${...} 格式");
+        }
     }
 
     private WorkflowProcessListenerVO toVO(WorkflowProcessListener entity) {

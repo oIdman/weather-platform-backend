@@ -10,6 +10,7 @@ import org.jeecg.modules.workflow.api.dto.WorkflowPage;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskActionRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskCopyRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskDelegateRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowEventTriggerRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskReturnRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskSignCreateRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskSignDeleteRequest;
@@ -84,6 +85,14 @@ public class WorkflowTaskController {
     @PutMapping("/reject")
     public Result<Boolean> reject(@Valid @RequestBody WorkflowTaskActionRequest request) {
         workflowService.reject(request);
+        return Result.ok(true);
+    }
+
+    @Operation(summary = "跳过任务")
+    @RequiresPermissions(value = {"bpm:task:update", "workflow:task:handle"}, logical = Logical.OR)
+    @PutMapping("/skip")
+    public Result<Boolean> skip(@Valid @RequestBody WorkflowTaskActionRequest request) {
+        workflowService.skipTask(request);
         return Result.ok(true);
     }
 
@@ -164,5 +173,12 @@ public class WorkflowTaskController {
                                            @RequestParam String taskDefineKey) {
         workflowService.triggerCallback(processInstanceId, taskDefineKey);
         return Result.ok(true);
+    }
+
+    @Operation(summary = "触发消息或信号边界事件")
+    @RequiresPermissions("bpm:task:update")
+    @PutMapping("/trigger-event")
+    public Result<Integer> triggerEvent(@Valid @RequestBody WorkflowEventTriggerRequest request) {
+        return Result.ok(workflowService.triggerEvent(request));
     }
 }

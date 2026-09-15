@@ -80,6 +80,19 @@ public class WorkflowCandidateResolver {
         String startUserId = text(execution.getVariable(START_USER_ID));
         Set<String> userIds = resolve(task, strategy, startUserId, execution.getVariables(),
                 execution.getTenantId(), execution.getProcessDefinitionId(), execution);
+        return randomUser(userIds);
+    }
+
+    /** 原生 BPMN 单实例任务没有 DelegateExecution 可直接传入时使用。 */
+    public String resolveOne(UserTask task, Integer strategy, String startUserId,
+                             Map<String, Object> variables, String tenantId, String processDefinitionId) {
+        if (task == null) {
+            return null;
+        }
+        return randomUser(resolve(task, strategy, startUserId, variables, tenantId, processDefinitionId, null));
+    }
+
+    private String randomUser(Set<String> userIds) {
         if (userIds.isEmpty()) {
             return null;
         }
@@ -117,14 +130,15 @@ public class WorkflowCandidateResolver {
         Map<String, Object> variables = execution == null ? Collections.emptyMap() : execution.getVariables();
         Collection<String> userIds;
         switch (strategy) {
+            case 1 -> userIds = Collections.emptyList();
             case 10 -> userIds = candidateIdentityAdapter.userIdsByRoleCodes(params);
             case 20 -> userIds = candidateIdentityAdapter.userIdsByDepartmentIds(params);
             case 21 -> userIds = departmentLeaderUserIds(params);
             case 22 -> userIds = candidateIdentityAdapter.userIdsByPositionIds(params);
             case 23 -> userIds = configuredContinuousDepartmentLeaderUserIds(rawParam);
             case 30 -> userIds = params;
-            case 34 -> userIds = selectedUserIds(variables, APPROVE_USER_SELECT_ASSIGNEES, element.getId());
-            case 35 -> userIds = selectedUserIds(variables, START_USER_SELECT_ASSIGNEES, element.getId());
+            case 34 -> userIds = selectedUserIds(variables, APPROVE_USER_SELECT_ASSIGNEES, element.getId(), false);
+            case 35 -> userIds = selectedUserIds(variables, START_USER_SELECT_ASSIGNEES, element.getId(), false);
             case 32, 33, 36 -> userIds = startUserId == null ? Collections.emptyList() : List.of(startUserId);
             case 37 -> userIds = startUserDepartmentLeaderUserIds(startUserId, rawParam, false);
             case 38 -> userIds = startUserDepartmentLeaderUserIds(startUserId, rawParam, true);
@@ -161,10 +175,16 @@ public class WorkflowCandidateResolver {
         if (strategy == null) {
             return Collections.emptySet();
         }
+        // 与芋道 BpmTaskCandidateInvoker 保持一致：自动通过/自动拒绝节点不参与候选人计算，
+        // 由任务创建监听器负责完成节点，避免给自动节点错误建立待办。
+        if (isAutomaticApproval(task)) {
+            return Collections.emptySet();
+        }
         String rawParam = extensionValue(task, CANDIDATE_PARAM);
         List<String> params = splitComma(rawParam);
         Collection<String> userIds;
         switch (strategy) {
+            case 1 -> userIds = Collections.emptyList();
             case 10 -> userIds = candidateIdentityAdapter.userIdsByRoleCodes(
                     params.isEmpty() ? task.getCandidateGroups() : params);
             case 20 -> userIds = candidateIdentityAdapter.userIdsByDepartmentIds(params);
@@ -172,8 +192,8 @@ public class WorkflowCandidateResolver {
             case 22 -> userIds = candidateIdentityAdapter.userIdsByPositionIds(params);
             case 23 -> userIds = configuredContinuousDepartmentLeaderUserIds(rawParam);
             case 30 -> userIds = params.isEmpty() ? task.getCandidateUsers() : params;
-            case 34 -> userIds = selectedUserIds(variables, APPROVE_USER_SELECT_ASSIGNEES, task.getId());
-            case 35 -> userIds = selectedUserIds(variables, START_USER_SELECT_ASSIGNEES, task.getId());
+            case 34 -> userIds = selectedUserIds(variables, APPROVE_USER_SELECT_ASSIGNEES, task.getId(), execution != null);
+            case 35 -> userIds = selectedUserIds(variables, START_USER_SELECT_ASSIGNEES, task.getId(), execution != null);
             case 32, 33, 36 -> userIds = startUserId == null ? Collections.emptyList() : List.of(startUserId);
             case 37 -> userIds = startUserDepartmentLeaderUserIds(startUserId, rawParam, false);
             case 38 -> userIds = startUserDepartmentLeaderUserIds(startUserId, rawParam, true);
@@ -194,6 +214,11 @@ public class WorkflowCandidateResolver {
             result.remove(startUserId);
         }
         return result;
+    }
+
+    private boolean isAutomaticApproval(FlowElement element) {
+        int approveType = extensionInteger(element, WorkflowProcessConstants.EXTENSION_APPROVE_TYPE);
+        return approveType == 2 || approveType == 3;
     }
 
     public Integer candidateStrategy(FlowElement element) {
@@ -222,6 +247,22 @@ public class WorkflowCandidateResolver {
             return managerUserIds(processDefinitionId, tenantId);
         }
         return Collections.emptySet();
+    }
+
+    /**
+     * Resolves users configured for the empty-assignee fallback.
+     *
+     * <p>Native BPMN tasks may not carry a candidate strategy, so the task-created listener
+     * cannot reach this branch through {@link #resolve}. Keeping the lookup here also preserves
+     * tenant-aware process-manager resolution for portable and Jeecg-hosted deployments.</p>
+     */
+    public Set<String> resolveEmptyAssigneeCandidates(UserTask task, String processDefinitionId,
+                                                      String tenantId) {
+        if (task == null) {
+            return Collections.emptySet();
+        }
+        return new LinkedHashSet<>(normalizeActiveUserIds(
+                emptyFallbackUserIds(task, processDefinitionId, tenantId)));
     }
 
     private Set<String> managerUserIds(String processDefinitionId, String tenantId) {
@@ -275,13 +316,19 @@ public class WorkflowCandidateResolver {
 
     private Collection<String> exactLevelDepartmentLeaderUserIds(String departmentId, int level) {
         String currentDepartmentId = departmentId;
+        Set<String> visitedDepartmentIds = new LinkedHashSet<>();
+        visitedDepartmentIds.add(currentDepartmentId);
         for (int index = 1; index < level; index++) {
             Set<String> parentIds = normalizedDepartmentIds(candidateIdentityAdapter
                     .parentDepartmentIds(Set.of(currentDepartmentId)));
-            if (parentIds.isEmpty()) {
+            String nextDepartmentId = parentIds.stream()
+                    .filter(parentId -> !visitedDepartmentIds.contains(parentId))
+                    .findFirst().orElse(null);
+            if (nextDepartmentId == null) {
                 break;
             }
-            currentDepartmentId = parentIds.iterator().next();
+            currentDepartmentId = nextDepartmentId;
+            visitedDepartmentIds.add(currentDepartmentId);
         }
         return candidateIdentityAdapter.leaderUserIdsByDepartmentId(currentDepartmentId);
     }
@@ -293,14 +340,21 @@ public class WorkflowCandidateResolver {
                 continue;
             }
             String currentDepartmentId = departmentId;
+            Set<String> visitedDepartmentIds = new LinkedHashSet<>();
             for (int index = 0; index < level; index++) {
+                if (!visitedDepartmentIds.add(currentDepartmentId)) {
+                    break;
+                }
                 result.addAll(candidateIdentityAdapter.leaderUserIdsByDepartmentId(currentDepartmentId));
                 Set<String> parentIds = normalizedDepartmentIds(candidateIdentityAdapter
                         .parentDepartmentIds(Set.of(currentDepartmentId)));
-                if (parentIds.isEmpty()) {
+                String nextDepartmentId = parentIds.stream()
+                        .filter(parentId -> !visitedDepartmentIds.contains(parentId))
+                        .findFirst().orElse(null);
+                if (nextDepartmentId == null) {
                     break;
                 }
-                currentDepartmentId = parentIds.iterator().next();
+                currentDepartmentId = nextDepartmentId;
             }
         }
         return result;
@@ -314,6 +368,10 @@ public class WorkflowCandidateResolver {
     }
 
     private Collection<String> userGroupUserIds(List<String> groupIds, String tenantId) {
+        Collection<String> configured = candidateIdentityAdapter.userIdsByGroupIds(groupIds);
+        if (configured != null && !configured.isEmpty()) {
+            return configured;
+        }
         List<Long> ids = groupIds.stream().map(this::parseLong).filter(Objects::nonNull).toList();
         if (ids.isEmpty()) {
             return Collections.emptyList();
@@ -328,10 +386,17 @@ public class WorkflowCandidateResolver {
     }
 
     private Collection<String> selectedUserIds(Map<String, Object> variables, String variableName,
-                                               String activityId) {
+                                               String activityId, boolean required) {
         Object raw = variables == null ? null : variables.get(variableName);
+        if (required && raw == null) {
+            throw new JeecgBootException("节点“" + activityId + "”未配置自选审批人");
+        }
         Map<String, Object> selections = toObjectMap(raw);
-        return normalizeIds(selections.get(activityId));
+        Set<String> userIds = normalizeIds(selections.get(activityId));
+        if (required && userIds.isEmpty()) {
+            throw new JeecgBootException("节点“" + activityId + "”未选择审批人");
+        }
+        return userIds;
     }
 
     private Object evaluateExpression(String expressionText, DelegateExecution execution) {

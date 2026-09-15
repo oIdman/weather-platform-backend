@@ -17,6 +17,13 @@ public class WorkflowActivityNodeVO {
     private Date startTime;
     private Date endTime;
     private List<WorkflowTaskVO> tasks;
+    /** 是否为 Flowable 多实例审批节点。 */
+    private Boolean multiInstance;
+    /** 多实例节点的总实例数、已完成实例数和当前活动实例数。 */
+    private Integer instanceCount;
+    private Integer completedInstanceCount;
+    private Integer activeInstanceCount;
+    private Integer completionPercent;
     private Integer candidateStrategy;
     private List<WorkflowUserSimpleVO> candidateUsers;
     private String processInstanceId;

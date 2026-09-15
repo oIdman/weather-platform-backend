@@ -72,10 +72,6 @@ public class WorkflowSimpleModelConverter {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String CANDIDATE_RESOLVER_EXPRESSION =
             "${workflowCandidateResolver.resolveOne(execution)}";
-    private static final String CANDIDATE_RESOLVER_ALL_EXPRESSION =
-            "${workflowCandidateResolver.resolveAll(execution)}";
-    private static final String START_USER_SELECT_ASSIGNEES = "PROCESS_START_USER_SELECT_ASSIGNEES";
-    private static final String APPROVE_USER_SELECT_ASSIGNEES = "PROCESS_APPROVE_USER_SELECT_ASSIGNEES";
 
     private final AtomicInteger generatedId = new AtomicInteger();
     private final Set<String> usedIds = new HashSet<>();
@@ -139,7 +135,7 @@ public class WorkflowSimpleModelConverter {
             return null;
         }
         int type = integer(node.get("type"), -1);
-        if (type == START_NODE || type == START_USER_NODE) {
+        if (type == START_NODE) {
             return buildChain(process, map(node.get("childNode")));
         }
         if (type == END_NODE) {
@@ -198,6 +194,12 @@ public class WorkflowSimpleModelConverter {
                 WorkflowProcessConstants.VARIABLE_STATUS, null);
         addIoParameter(inParameters, inTargets, "_workflowStartUserId", "_workflowStartUserId", null);
         addIoParameter(inParameters, inTargets, "_workflowTenantId", "_workflowTenantId", null);
+        // 子流程配置中的“是否跳过发起人节点”通过标准输入参数传递，
+        // 由子流程启动时的监听器读取；未配置时保持目标版默认值 false。
+        boolean skipStartUserNode = bool(setting.get("skipStartUserNode"));
+        addIoParameter(inParameters, inTargets,
+                null, WorkflowProcessConstants.VARIABLE_SKIP_START_USER_NODE,
+                String.valueOf(skipStartUserNode));
         if (!inParameters.isEmpty()) {
             activity.setInParameters(inParameters);
         }
@@ -213,6 +215,95 @@ public class WorkflowSimpleModelConverter {
                 activity.setOutParameters(outParameters);
             }
         }
+        configureChildProcessStartUser(activity, setting);
+        configureChildProcessMultiInstance(activity, setting);
+    }
+
+    private void configureChildProcessStartUser(CallActivity activity, Map<String, Object> setting) {
+        Map<String, Object> startUserSetting = map(setting.get("startUserSetting"));
+        if (startUserSetting.isEmpty()) {
+            startUserSetting = new LinkedHashMap<>();
+            startUserSetting.put("type", 1);
+        }
+        int type = integer(startUserSetting.get("type"), 1);
+        if (type != 1 && type != 2) {
+            throw new JeecgBootException("子流程发起人类型不正确：" + type);
+        }
+        if (type == 2 && !StringUtils.hasText(text(startUserSetting.get("formField")))) {
+            throw new JeecgBootException("子流程发起人选择表单字段不能为空");
+        }
+        int emptyType = integer(startUserSetting.get("emptyType"), 1);
+        if (emptyType < 1 || emptyType > 3) {
+            throw new JeecgBootException("子流程发起人为空处理类型不正确：" + emptyType);
+        }
+        try {
+            FlowableListener listener = new FlowableListener();
+            listener.setEvent(org.flowable.engine.delegate.ExecutionListener.EVENTNAME_START);
+            listener.setImplementationType("delegateExpression");
+            listener.setImplementation("${workflowCallActivityListener}");
+            FieldExtension config = new FieldExtension();
+            config.setFieldName("listenerConfig");
+            config.setStringValue(objectMapper.writeValueAsString(startUserSetting));
+            listener.getFieldExtensions().add(config);
+            activity.setExecutionListeners(List.of(listener));
+        } catch (Exception exception) {
+            throw new JeecgBootException("子流程发起人配置无法序列化", exception);
+        }
+    }
+
+    private void configureChildProcessMultiInstance(CallActivity activity, Map<String, Object> setting) {
+        Map<String, Object> multi = map(setting.get("multiInstanceSetting"));
+        if (!bool(multi.get("enable"))) {
+            return;
+        }
+        int sourceType = integer(multi.get("sourceType"), 1);
+        if (sourceType < 1 || sourceType > 3) {
+            throw new JeecgBootException("子流程多实例来源类型不正确：" + sourceType);
+        }
+        String source = text(multi.get("source"));
+        MultiInstanceLoopCharacteristics loop = new MultiInstanceLoopCharacteristics();
+        loop.setSequential(bool(multi.get("sequential")));
+        if (sourceType == 1) {
+            if (!StringUtils.hasText(source)) {
+                throw new JeecgBootException("子流程多实例固定数量不能为空");
+            }
+            try {
+                if (Integer.parseInt(source.trim()) < 1) {
+                    throw new NumberFormatException();
+                }
+            } catch (NumberFormatException exception) {
+                throw new JeecgBootException("子流程多实例固定数量必须大于 0");
+            }
+            loop.setLoopCardinality(source.trim());
+        } else if (sourceType == 2) {
+            if (!StringUtils.hasText(source)) {
+                throw new JeecgBootException("子流程多实例表单字段不能为空");
+            }
+            // 数字表单应作为循环次数表达式；inputDataItem 要求 Iterable，
+            // 直接把数字字段写入会在调用活动运行时类型转换失败。
+            loop.setLoopCardinality(flowableExpression(source));
+        } else {
+            if (!StringUtils.hasText(source)) {
+                throw new JeecgBootException("子流程多实例表单字段不能为空");
+            }
+            // 多选表单字段作为集合输入，使用原生 Flowable 可求值的表达式。
+            loop.setInputDataItem(flowableExpression(source));
+        }
+        int ratio = integer(multi.get("approveRatio"), 100);
+        if (ratio < 1 || ratio > 100) {
+            throw new JeecgBootException("子流程多实例完成比例必须在 1 到 100 之间");
+        }
+        loop.setCompletionCondition("${nrOfCompletedInstances * 100 >= nrOfInstances * " + ratio + "}");
+        activity.setLoopCharacteristics(loop);
+        addExtensionElement(activity, WorkflowProcessConstants.EXTENSION_CHILD_PROCESS_MULTI_INSTANCE_SOURCE_TYPE,
+                String.valueOf(sourceType));
+    }
+
+    private String flowableExpression(String value) {
+        String trimmed = value.trim();
+        return (trimmed.startsWith("${") && trimmed.endsWith("}"))
+                || (trimmed.startsWith("#{") && trimmed.endsWith("}"))
+                ? trimmed : "${" + trimmed + "}";
     }
 
     private List<Map<String, Object>> ioMaps(Object value) {
@@ -264,9 +355,11 @@ public class WorkflowSimpleModelConverter {
     }
 
     private void addTimeoutBoundary(Process process, Map<String, Object> node, FlowNode flowNode) {
-        if (!(flowNode instanceof UserTask userTask)) {
+        if (flowNode instanceof CallActivity callActivity) {
+            addChildProcessTimeoutBoundary(process, node, callActivity);
             return;
         }
+        if (!(flowNode instanceof UserTask userTask)) return;
         Map<String, Object> timeout = map(node.get("timeoutHandler"));
         if (!bool(timeout.get("enable"))) {
             return;
@@ -287,15 +380,43 @@ public class WorkflowSimpleModelConverter {
         boundaryEvent.setAttachedToRef(userTask);
         boundaryEvent.setCancelActivity(false);
         TimerEventDefinition timer = new TimerEventDefinition();
-        timer.setTimeDuration(duration);
         if (handlerType == WorkflowProcessConstants.TIMEOUT_HANDLER_REMINDER && maxRemindCount > 1) {
             timer.setTimeCycle("R" + maxRemindCount + "/" + duration);
+        } else {
+            timer.setTimeDuration(duration);
         }
         boundaryEvent.addEventDefinition(timer);
         addExtensionElement(boundaryEvent, WorkflowProcessConstants.EXTENSION_BOUNDARY_EVENT_TYPE,
                 String.valueOf(WorkflowProcessConstants.BOUNDARY_EVENT_USER_TASK_TIMEOUT));
         addExtensionElement(boundaryEvent, WorkflowProcessConstants.EXTENSION_TIMEOUT_HANDLER_TYPE,
                 String.valueOf(handlerType));
+        process.addFlowElement(boundaryEvent);
+    }
+
+    /** 将子流程超时设置转换成 Flowable 非中断边界定时器。 */
+    private void addChildProcessTimeoutBoundary(Process process, Map<String, Object> node,
+                                                CallActivity callActivity) {
+        Map<String, Object> childSetting = map(node.get("childProcessSetting"));
+        Map<String, Object> timeout = map(childSetting.get("timeoutSetting"));
+        if (!bool(timeout.get("enable"))) return;
+        int type = integer(timeout.get("type"), 1);
+        String expression = text(timeout.get("timeExpression"));
+        if (expression == null || expression.isBlank()) {
+            throw new JeecgBootException("子流程启用了超时处理但未设置时间表达式");
+        }
+        if (type != 1 && type != 2) {
+            throw new JeecgBootException("不支持的子流程超时类型：" + type);
+        }
+        BoundaryEvent boundaryEvent = new BoundaryEvent();
+        boundaryEvent.setId(uniqueId("BoundaryEvent_" + callActivity.getId()));
+        boundaryEvent.setName("子流程超时");
+        boundaryEvent.setAttachedToRef(callActivity);
+        boundaryEvent.setCancelActivity(false);
+        TimerEventDefinition timer = new TimerEventDefinition();
+        if (type == 2) timer.setTimeDate(expression); else timer.setTimeDuration(expression);
+        boundaryEvent.addEventDefinition(timer);
+        addExtensionElement(boundaryEvent, WorkflowProcessConstants.EXTENSION_BOUNDARY_EVENT_TYPE,
+                String.valueOf(WorkflowProcessConstants.BOUNDARY_EVENT_CHILD_PROCESS_TIMEOUT));
         process.addFlowElement(boundaryEvent);
     }
 
@@ -367,7 +488,19 @@ public class WorkflowSimpleModelConverter {
         String id = uniqueId(string(node.get("id"), "Node"));
         String name = string(node.get("name"), "流程节点");
         FlowNode result;
-        if (type == APPROVE_NODE || type == TRANSACTOR_NODE) {
+        if (type == START_USER_NODE) {
+            // 芋道模型把“发起人”作为真实用户任务保存。父流程默认通过
+            // assignStartUserHandlerType=2 自动跳过；子流程则由
+            // PROCESS_SKIP_START_USER_NODE 输入变量决定是否保留该任务。
+            UserTask startUserTask = new UserTask();
+            Map<String, Object> startUserNode = new LinkedHashMap<>(node);
+            startUserNode.put("candidateStrategy", 36);
+            startUserNode.put("assignee", "${_workflowStartUserId}");
+            startUserNode.put("approveMethod", 1);
+            startUserNode.put("assignStartUserHandlerType", WorkflowProcessConstants.ASSIGN_START_USER_SKIP);
+            configureUserTask(startUserTask, startUserNode);
+            result = startUserTask;
+        } else if (type == APPROVE_NODE || type == TRANSACTOR_NODE) {
             UserTask userTask = new UserTask();
             userTask.setId(id);
             userTask.setName(name);
@@ -422,8 +555,12 @@ public class WorkflowSimpleModelConverter {
         int strategy = integer(node.get("candidateStrategy"), -1);
         int approveMethod = integer(node.get(APPROVE_METHOD), 1);
         int approveRatio = integer(node.get(APPROVE_RATIO), 100);
-        String rawCandidateParam = text(node.get("candidateParam"));
-        List<String> candidateParam = strings(node.get("candidateParam"));
+        Object candidateParamValue = node.get("candidateParam");
+        List<String> candidateParam = strings(candidateParamValue);
+        // The UI may send candidateParam either as a comma-delimited string or as an
+        // array. Keep the BPMN extension stable and human-readable in both cases.
+        String rawCandidateParam = candidateParamValue instanceof Collection<?>
+                ? null : text(candidateParamValue);
         int approveType = integer(node.get("approveType"), 1);
         if (approveType == 2 || approveType == 3) {
             assignee = "${_workflowStartUserId}";
@@ -444,13 +581,17 @@ public class WorkflowSimpleModelConverter {
         } else if (strategy == 36 && !StringUtils.hasText(assignee)) {
             assignee = "${_workflowStartUserId}";
         } else if (strategy == 35 && !StringUtils.hasText(assignee)) {
-            assignee = selectedAssigneeExpression(START_USER_SELECT_ASSIGNEES, task.getId());
+            // Resolve through the same candidate resolver used by multi-instance tasks. This
+            // keeps an omitted selection as an empty candidate (handled by the configured
+            // empty-assignee policy) instead of failing EL evaluation on a missing map entry.
+            assignee = CANDIDATE_RESOLVER_EXPRESSION;
         } else if (strategy == 34 && !StringUtils.hasText(assignee)) {
-            assignee = selectedAssigneeExpression(APPROVE_USER_SELECT_ASSIGNEES, task.getId());
+            assignee = CANDIDATE_RESOLVER_EXPRESSION;
         } else if ((strategy == 32 || strategy == 33) && !StringUtils.hasText(assignee)) {
             assignee = "${_workflowStartUserId}";
         }
-        validateCandidateParam(strategy, rawCandidateParam);
+        validateCandidateParam(strategy, StringUtils.hasText(rawCandidateParam)
+                ? rawCandidateParam : String.join(",", candidateParam));
         boolean multiInstance = approveMethod == 2 || approveMethod == 3 || approveMethod == 4;
         if (multiInstance) {
             // The runtime engine fills the collection from the configured candidate strategy.
@@ -830,7 +971,7 @@ public class WorkflowSimpleModelConverter {
     }
 
     private void validateCandidateParam(int strategy, String candidateParam) {
-        if (strategy == 32 || strategy == 33 || strategy == 34 || strategy == 35
+        if (strategy == 1 || strategy == 32 || strategy == 33 || strategy == 34 || strategy == 35
                 || strategy == 36 || strategy < 0) {
             return;
         }
@@ -863,8 +1004,11 @@ public class WorkflowSimpleModelConverter {
     private void configureMultiInstance(UserTask task, int approveMethod, int approveRatio) {
         MultiInstanceLoopCharacteristics characteristics = new MultiInstanceLoopCharacteristics();
         String activityId = task.getId();
-        // 直接在节点进入时计算，保证退回、循环或组织调整后不会复用流程启动时的旧候选人集合。
-        characteristics.setInputDataItem(CANDIDATE_RESOLVER_ALL_EXPRESSION);
+        // 候选人集合由流程启动/节点流转前写入流程变量，再由 Flowable 原生多实例行为
+        // 读取。这样顺序、并行、或签和会签都共享同一份快照，避免每个子任务分别求值
+        // 导致组织数据在同一节点内变化时出现候选人集合不一致。
+        characteristics.setInputDataItem("${"
+                + WorkflowProcessConstants.multiInstanceAssigneesVariable(activityId) + "}");
         characteristics.setElementVariable(WorkflowProcessConstants.multiInstanceAssigneeVariable(activityId));
         if (approveMethod == 4) {
             characteristics.setSequential(true);
@@ -874,14 +1018,12 @@ public class WorkflowSimpleModelConverter {
             characteristics.setCompletionCondition("${nrOfCompletedInstances > 0}");
         } else if (approveMethod == 2) {
             characteristics.setSequential(false);
-            characteristics.setCompletionCondition(String.format(
-                    "${nrOfCompletedInstances/nrOfInstances >= %.2f}", approveRatio / 100D));
+            // 使用整数比较避免不同 EL 引擎对整数除法/浮点精度的差异。
+            // 例如 60% 统一表达为 completed * 100 >= total * 60。
+            characteristics.setCompletionCondition(
+                    "${nrOfCompletedInstances * 100 >= nrOfInstances * " + approveRatio + "}");
         }
         task.setLoopCharacteristics(characteristics);
-    }
-
-    private String selectedAssigneeExpression(String variableName, String activityId) {
-        return "${" + variableName + "['" + activityId.replace("'", "") + "'][0]}";
     }
 
     private void addExtensionElement(FlowElement element, String name, String value) {
@@ -917,6 +1059,12 @@ public class WorkflowSimpleModelConverter {
 
     private String conditionExpression(Map<String, Object> branch) {
         Map<String, Object> setting = map(branch.get("conditionSetting"));
+        if (integer(setting.get("conditionType"), -1) == 2) {
+            String ruleExpression = conditionRuleExpression(map(setting.get("conditionGroups")));
+            if (StringUtils.hasText(ruleExpression)) {
+                return ruleExpression;
+            }
+        }
         String expression = firstText(setting, "conditionExpression", "expression");
         if (!StringUtils.hasText(expression)) {
             expression = firstText(branch, "conditionExpression", "expression");
@@ -927,6 +1075,54 @@ public class WorkflowSimpleModelConverter {
         expression = expression.trim();
         return expression.startsWith("${") || expression.startsWith("#{")
                 ? expression : "${" + expression + "}";
+    }
+
+    /** Converts the target simple-designer rule groups into a Flowable EL condition. */
+    private String conditionRuleExpression(Map<String, Object> groups) {
+        List<Map<String, Object>> conditions = maps(groups.get("conditions"));
+        if (conditions.isEmpty()) {
+            return null;
+        }
+        String groupJoin = (!groups.containsKey("and") || bool(groups.get("and"))) ? " && " : " || ";
+        List<String> groupExpressions = new ArrayList<>();
+        for (Map<String, Object> condition : conditions) {
+            List<Map<String, Object>> rules = maps(condition.get("rules"));
+            List<String> ruleExpressions = new ArrayList<>();
+            for (Map<String, Object> rule : rules) {
+                String left = firstText(rule, "leftSide", "field", "name");
+                String operator = firstText(rule, "opCode", "operator");
+                String right = text(rule.get("rightSide"));
+                if (!StringUtils.hasText(left) || !StringUtils.hasText(operator) || right == null) {
+                    continue;
+                }
+                String rightLiteral = comparisonLiteral(right);
+                String expression = switch (operator.toLowerCase(java.util.Locale.ROOT)) {
+                    case "==", "!=", ">", ">=", "<", "<=" -> left + " " + operator + " " + rightLiteral;
+                    case "contain" -> "(" + left + " != null && " + left + ".contains(" + rightLiteral + "))";
+                    case "!contain" -> "!(" + left + " != null && " + left + ".contains(" + rightLiteral + "))";
+                    default -> null;
+                };
+                if (StringUtils.hasText(expression)) {
+                    ruleExpressions.add(expression);
+                }
+            }
+            if (!ruleExpressions.isEmpty()) {
+                String ruleJoin = (!condition.containsKey("and") || bool(condition.get("and")))
+                        ? " && " : " || ";
+                groupExpressions.add("(" + String.join(ruleJoin, ruleExpressions) + ")");
+            }
+        }
+        return groupExpressions.isEmpty() ? null : "${" + String.join(groupJoin, groupExpressions) + "}";
+    }
+
+    private String comparisonLiteral(String value) {
+        String trimmed = value.trim();
+        if (trimmed.matches("-?(?:0|[1-9]\\d*)(?:\\.\\d+)?")
+                || "true".equalsIgnoreCase(trimmed) || "false".equalsIgnoreCase(trimmed)
+                || "null".equalsIgnoreCase(trimmed)) {
+            return trimmed;
+        }
+        return "\"" + trimmed.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
     private SequenceFlow connect(Process process, String sourceId, String targetId,

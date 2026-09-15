@@ -32,8 +32,14 @@
             <a-form-item label="表单类型" required><a-radio-group v-model:value="draft.formType"><a-radio :value="10">流程表单</a-radio><a-radio :value="20">业务表单</a-radio></a-radio-group></a-form-item>
             <a-form-item v-if="draft.formType === 10" label="流程表单" required><a-select v-model:value="draft.formId" :options="formOptions" placeholder="请选择流程表单" /></a-form-item>
             <template v-else>
-              <a-form-item label="提交页面路径" required><a-input v-model:value="draft.formCustomCreatePath" placeholder="业务表单的提交页面路径" /></a-form-item>
-              <a-form-item label="查看页面路径" required><a-input v-model:value="draft.formCustomViewPath" placeholder="业务表单的详情页面路径" /></a-form-item>
+              <a-form-item label="提交页面路径" required>
+                <a-input v-model:value="draft.formCustomCreatePath" placeholder="业务表单的提交页面路径" />
+                <div class="field-hint">自定义表单的提交路径，使用 Vue 的路由地址，例如说: /bpm/oa/leave/create.vue</div>
+              </a-form-item>
+              <a-form-item label="查看页面路径" required>
+                <a-input v-model:value="draft.formCustomViewPath" placeholder="业务表单的详情页面路径" />
+                <div class="field-hint">自定义表单的查看组件地址，使用 Vue 的组件地址，例如说：/bpm/oa/leave/detail.vue</div>
+              </a-form-item>
             </template>
           </a-form>
           <section v-if="draft.formType === 10" class="form-preview">
@@ -47,8 +53,14 @@
         </div>
 
         <template v-if="step === 2">
-          <SimpleProcessDesigner v-if="draft.type === 20" v-model="draft.simpleModel" :form-fields="fieldOptions" />
-          <BpmnDesigner v-else v-model="draft.bpmnXml" />
+          <SimpleProcessDesigner
+            v-if="draft.type === 20"
+            v-model="draft.simpleModel"
+            :form-fields="fieldOptions"
+            :start-user-ids="draft.startUserIds"
+            :start-dept-ids="draft.startDeptIds"
+          />
+          <BpmnDesigner v-else v-model="draft.bpmnXml" :form-fields="fieldOptions" />
         </template>
 
         <a-form v-show="step === 3" class="wizard-form extra-form" :label-col="{ flex: '150px' }" :wrapper-col="{ flex: '1' }">
@@ -157,6 +169,8 @@
     } else if (index === 1) {
       if (draft.formType === 10 && !draft.formId) error = '请选择流程表单';
       if (draft.formType === 20 && (!draft.formCustomCreatePath?.trim() || !draft.formCustomViewPath?.trim())) error = '请填写业务表单的提交和查看页面路径';
+    } else if (index === 2 && draft.type === 20) {
+      error = validateSimpleModel(draft.simpleModel);
     } else if (index === 3) {
       if (draft.titleSetting.enable && !draft.titleSetting.title?.trim()) error = '请填写自定义标题';
       else if (draft.summarySetting.enable && draft.formType === 10 && !draft.summarySetting.summary?.length) error = '请选择摘要字段';
@@ -165,6 +179,190 @@
     }
     if (error) { step.value = index; createMessage.warning(error); return false; }
     return true;
+  }
+
+  function validateSimpleModel(model: any) {
+    let error = '';
+    const visit = (node: any) => {
+      if (!node || error) return;
+      if ([11, 13].includes(Number(node.type)) && Number(node.approveType || 1) === 1) {
+        const strategy = Number(node.candidateStrategy);
+        const strategyError = validateCandidateStrategy(node, strategy);
+        if (strategyError) {
+          error = strategyError;
+          return;
+        }
+        const requiresParam = [10, 20, 21, 22, 23, 30, 40, 50, 51, 60].includes(strategy);
+        if (requiresParam && !String(node.candidateParam || '').trim()) {
+          error = `节点“${node.name || '未命名'}”尚未配置审批人策略参数`;
+          return;
+        }
+        if ([37, 38].includes(strategy) && (!Number(node.candidateParam) || Number(node.candidateParam) < 1)) {
+          error = `节点“${node.name || '未命名'}”的发起人部门层级无效`;
+          return;
+        }
+        if (Number(node.approveMethod) === 2 && (!Number(node.approveRatio) || Number(node.approveRatio) < 1 || Number(node.approveRatio) > 100)) {
+          error = `节点“${node.name || '未命名'}”的会签通过比例须在 1%～100% 之间`;
+          return;
+        }
+        if (Number(node.assignEmptyHandler?.type) === 3 && !node.assignEmptyHandler?.userIds?.length) {
+          error = `节点“${node.name || '未命名'}”的审批人为空处理缺少指定成员`;
+          return;
+        }
+        if (Number(node.rejectHandler?.type) === 2 && !String(node.rejectHandler?.returnNodeId || '').trim()) {
+          error = `节点“${node.name || '未命名'}”尚未选择拒绝后的退回节点`;
+          return;
+        }
+        error = validateApprovalSettings(node);
+        if (error) return;
+      }
+      if (node.type === 15 && node.triggerSetting) {
+        const setting = node.triggerSetting;
+        if ([1, 2].includes(Number(setting.type))) {
+          if (!/^https?:\/\/\S+$/i.test(String(setting.httpRequestSetting?.url || '').trim())) {
+            error = `触发器“${node.name || '未命名'}”的请求地址无效`;
+            return;
+          }
+        } else {
+          const formSettings = Array.isArray(setting.formSettings) ? setting.formSettings : [];
+          if (!formSettings.length) {
+            error = `触发器“${node.name || '未命名'}”至少需要一条表单设置`;
+            return;
+          }
+          for (let index = 0; index < formSettings.length; index++) {
+            const formSetting = formSettings[index] || {};
+            if (Number(formSetting.conditionType) === 1 && !String(formSetting.conditionExpression || '').trim()) {
+              error = `触发器“${node.name || '未命名'}”第 ${index + 1} 条条件表达式不能为空`;
+              return;
+            }
+            if (Number(formSetting.conditionType) === 2 && !validConditionGroups(formSetting.conditionGroups)) {
+              error = `触发器“${node.name || '未命名'}”第 ${index + 1} 条条件组规则不完整`;
+              return;
+            }
+            if (Number(setting.type) === 10) {
+              const fields = formSetting.updateFormFields;
+              if (!fields || typeof fields !== 'object' || Array.isArray(fields) || !Object.keys(fields).length
+                || Object.entries(fields).some(([key, value]) => !String(key).trim() || !String(value ?? '').trim())) {
+                error = `触发器“${node.name || '未命名'}”第 ${index + 1} 条修改字段配置不完整`;
+                return;
+              }
+            } else if (!Array.isArray(formSetting.deleteFields) || !formSetting.deleteFields.length) {
+              error = `触发器“${node.name || '未命名'}”第 ${index + 1} 条删除字段不能为空`;
+              return;
+            }
+          }
+        }
+      }
+      visit(node.childNode);
+      (node.conditionNodes || []).forEach(visit);
+    };
+    visit(model);
+    return error;
+  }
+
+  function validateCandidateStrategy(node: any, strategy: number) {
+    const nodeName = node.name || '未命名';
+    const raw = String(node.candidateParam || '').trim();
+    const simpleStrategies = [32, 33, 34, 35, 36];
+    if (simpleStrategies.includes(strategy) || Number.isNaN(strategy)) return '';
+    const values = raw.split(',').map((item) => item.trim()).filter(Boolean);
+    if ([10, 20, 21, 22, 30].includes(strategy) && !values.length) {
+      return `节点“${nodeName}”尚未选择候选人参数`;
+    }
+    if (strategy === 40 && values.some((value) => !/^\d+$/.test(value))) {
+      return `节点“${nodeName}”的用户组编号必须为数字`;
+    }
+    if ([23, 51].includes(strategy)) {
+      const parts = raw.split('|');
+      const base = parts[0]?.split(',').map((item) => item.trim()).filter(Boolean) || [];
+      const level = parts[1]?.trim();
+      if (!base.length || !level || !/^\d+$/.test(level) || Number(level) < 1) {
+        return `节点“${nodeName}”的候选参数应为“字段或部门|正整数层级”`;
+      }
+      if (strategy === 51 && base.length !== 1) {
+        return `节点“${nodeName}”的表单部门负责人策略只能选择一个部门字段`;
+      }
+      if (strategy === 51 && draft.formType === 10 && fieldOptions.value.length
+        && !fieldOptions.value.some((field) => field.value === base[0])) {
+        return `节点“${nodeName}”的表单部门字段不存在`;
+      }
+    }
+    if ([37, 38].includes(strategy) && (!/^\d+$/.test(raw) || Number(raw) < 1)) {
+      return `节点“${nodeName}”的发起人部门层级必须为正整数`;
+    }
+    if (strategy === 50) {
+      if (!/^[\w.-]+$/.test(raw)) return `节点“${nodeName}”的表单用户字段名称无效`;
+      if (draft.formType === 10 && fieldOptions.value.length
+        && !fieldOptions.value.some((field) => field.value === raw)) {
+        return `节点“${nodeName}”的表单用户字段不存在`;
+      }
+    }
+    if (strategy === 60 && !raw) {
+      return `节点“${nodeName}”的流程表达式不能为空`;
+    }
+    // 芋道的表达式策略由 Flowable ExpressionManager 解析，不限定为单一的
+    // `${...}` 形式；例如 `#{...}`、已注册的表达式函数或组合表达式也应能保存。
+    // 这里只校验非空，具体语法交给发布/运行时表达式引擎处理。
+    return '';
+  }
+
+  function validConditionGroups(groups: any) {
+    if (!groups || !Array.isArray(groups.conditions) || !groups.conditions.length) return false;
+    return groups.conditions.every((condition: any) => Array.isArray(condition?.rules) && condition.rules.length
+      && condition.rules.every((rule: any) => String(rule.leftSide || '').trim()
+        && String(rule.opCode || '').trim() && String(rule.rightSide ?? '').trim()));
+  }
+
+  function validateApprovalSettings(node: any) {
+    const nodeName = node.name || '未命名';
+    const permissions = parseJsonArray(node.fieldsPermission, `节点“${nodeName}”的字段权限 JSON 格式不正确`);
+    if (permissions.error) return permissions.error;
+    if (permissions.value.some((item: any) => !String(item?.field || item?.name || item?.fieldName || '').trim()
+      || !['READ', 'WRITE', 'NONE', 'READONLY', 'EDITABLE', 'HIDE'].includes(String(item?.permission || item?.auth || item?.type || '').toUpperCase()))) {
+      return `节点“${nodeName}”的字段权限必须包含字段名和 READ/WRITE/NONE 权限`;
+    }
+
+    const enabledButtons = Array.isArray(node.enabledButtons) ? node.enabledButtons : [];
+    if (enabledButtons.some((id: any) => ![1, 2, 3, 4, 5, 6, 7, 8].includes(Number(id)))) {
+      return `节点“${nodeName}”包含无效的操作按钮编号`;
+    }
+    if (Number(node.approveType || 1) === 1 && !enabledButtons.some((id: any) => [1, 2].includes(Number(id)))) {
+      return `节点“${nodeName}”至少需要启用“通过”或“拒绝”按钮`;
+    }
+    if (node.buttonsSetting != null && !Array.isArray(node.buttonsSetting)) {
+      return `节点“${nodeName}”的操作按钮配置格式不正确`;
+    }
+    if (Array.isArray(node.buttonsSetting) && node.buttonsSetting.some((item: any) => ![1, 2, 3, 4, 5, 6, 7, 8].includes(Number(item?.id)))) {
+      return `节点“${nodeName}”包含无效的操作按钮配置`;
+    }
+
+    for (const [key, label] of [['taskCreateListener', '创建任务'], ['taskAssignListener', '指派任务'], ['taskCompleteListener', '完成任务']] as const) {
+      const setting = node[key];
+      if (setting?.enable && !/^https?:\/\/\S+$/i.test(String(setting.path || '').trim())) {
+        return `节点“${nodeName}”的${label}监听器请求地址无效`;
+      }
+    }
+    for (const [key, label] of [['taskListeners', '任务'], ['executionListeners', '执行']] as const) {
+      const listeners = parseJsonArray(node[key], `节点“${nodeName}”的${label}监听器 JSON 格式不正确`);
+      if (listeners.error) return listeners.error;
+      if (listeners.value.some((item: any) => !String(item?.eventName || item?.event || '').trim()
+        || !String(item?.implementation || item?.value || item?.delegateExpression || item?.className || '').trim())) {
+        return `节点“${nodeName}”的${label}监听器必须包含事件和实现`;
+      }
+    }
+    return '';
+  }
+
+  function parseJsonArray(raw: any, message: string) {
+    if (raw == null || raw === '' || (Array.isArray(raw) && !raw.length)) return { value: [] as any[], error: '' };
+    if (Array.isArray(raw)) return { value: raw, error: '' };
+    if (typeof raw !== 'string') return { value: [] as any[], error: message };
+    try {
+      const value = JSON.parse(raw);
+      return Array.isArray(value) ? { value, error: '' } : { value: [] as any[], error: message };
+    } catch {
+      return { value: [] as any[], error: message };
+    }
   }
   function next() { if (validate(step.value)) step.value++; }
   function close() {

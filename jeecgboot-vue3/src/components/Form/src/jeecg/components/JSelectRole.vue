@@ -1,7 +1,7 @@
 <!--角色选择组件-->
 <template>
   <div class="JSelectRole">
-    <JSelectBiz @handleOpen="handleOpen" :loading="loadingEcho" v-bind="attrs"></JSelectBiz>
+    <JSelectBiz @handleOpen="handleOpen" @change="handleSelectChange" :loading="loadingEcho" v-bind="attrs"></JSelectBiz>
     <a-form-item>
       <RoleSelectModal @register="regModal" @getSelectResult="setValue" v-bind="getBindValue"></RoleSelectModal>
     </a-form-item>
@@ -40,7 +40,7 @@
       },
     },
     emits: ['options-change', 'change', 'update:value'],
-    setup(props, { emit, refs }) {
+    setup(props, { emit }) {
       const emitData = ref<any[]>();
       //注册model
       const [regModal, { openModal }] = useModal();
@@ -119,6 +119,15 @@
         // 代码逻辑说明: 【issues/7948】修复JselectRole组件不支持双向绑定
         emit('update:value', values);
       }
+      /**
+       * 同步下拉标签上的删除操作。
+       * JSelectBiz 删除标签时只会触发 change，若不转发，父组件会用旧值重新回显已删除的角色。
+       */
+      function handleSelectChange(values) {
+        const result = typeof props.value === 'string' ? values.join(',') : values;
+        emit('update:value', result);
+        emit('change', result);
+      }
       const getBindValue = Object.assign({}, unref(props), unref(attrs));
       return {
         state,
@@ -130,6 +139,7 @@
         tag,
         regModal,
         setValue,
+        handleSelectChange,
         handleOpen,
       };
     },

@@ -6,22 +6,27 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.EndEvent;
+import org.flowable.bpmn.model.Message;
+import org.flowable.bpmn.model.MessageEventDefinition;
 import org.flowable.bpmn.model.ExtensionElement;
 import org.flowable.bpmn.model.FlowElement;
 import org.flowable.bpmn.model.StartEvent;
 import org.flowable.bpmn.model.UserTask;
+import org.flowable.common.engine.api.FlowableException;
 import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RepositoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstanceQuery;
 import org.flowable.engine.repository.Deployment;
 import org.flowable.engine.repository.ProcessDefinition;
 import org.flowable.engine.repository.ProcessDefinitionQuery;
 import org.flowable.engine.runtime.ProcessInstance;
 import org.flowable.engine.runtime.Execution;
+import org.flowable.eventsubscription.api.EventSubscription;
 import org.flowable.engine.task.Attachment;
 import org.flowable.task.api.DelegationState;
 import org.flowable.task.api.Task;
@@ -38,9 +43,11 @@ import org.jeecg.modules.workflow.api.constant.WorkflowProcessConstants;
 import org.jeecg.modules.workflow.api.dto.WorkflowApprovalDetailRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowCancelRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowDeployRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowEventTriggerRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowPage;
 import org.jeecg.modules.workflow.api.dto.WorkflowProcessInstancePageRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowStartRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowStartEventRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskActionRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskDelegateRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowTaskReturnRequest;
@@ -56,10 +63,12 @@ import org.jeecg.modules.workflow.api.vo.WorkflowInstanceVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowModelVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowPrintDataVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowTaskVO;
+import org.jeecg.modules.workflow.api.vo.WorkflowTimelineEventVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowUserSimpleVO;
 import org.jeecg.modules.workflow.flowable.WorkflowBpmnNavigator;
 import org.jeecg.modules.workflow.flowable.WorkflowBpmnValidator;
 import org.jeecg.modules.workflow.flowable.WorkflowCandidateResolver;
+import org.jeecg.modules.workflow.flowable.WorkflowProcessCleanupContext;
 import org.jeecg.modules.workflow.service.WorkflowEngineService;
 import org.jeecg.modules.workflow.service.WorkflowModelService;
 import org.springframework.stereotype.Service;
@@ -75,6 +84,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -289,7 +299,9 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         variables.put("_workflowTenantId", tenantId);
         variables.put("_workflowStartUserId", identityAdapter.currentUserId());
         variables.put(WorkflowProcessConstants.PROCESS_INSTANCE_SKIP_EXPRESSION_ENABLED, true);
-        initializeMultiInstanceVariables(repositoryService.getBpmnModel(definition.getId()), definition.getId(),
+        BpmnModel bpmnModel = repositoryService.getBpmnModel(definition.getId());
+        validateStartUserSelections(bpmnModel, startAssignees, variables);
+        initializeMultiInstanceVariables(bpmnModel, definition.getId(),
                 variables, identityAdapter.currentUserId());
         Authentication.setAuthenticatedUserId(identityAdapter.currentUserId());
         try {
@@ -301,6 +313,70 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             builder.name(request.getName() == null || request.getName().isBlank()
                     ? definition.getName() : request.getName().trim());
             ProcessInstance instance = builder.start();
+            return instance.getId();
+        } finally {
+            Authentication.setAuthenticatedUserId(null);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public String startByMessageEvent(WorkflowStartEventRequest request) {
+        String tenantId = identityAdapter.currentTenantId();
+        String messageName = normalize(request.getMessageName());
+        if (messageName == null) {
+            throw new JeecgBootException("消息名称不能为空");
+        }
+        List<EventSubscription> subscriptions = runtimeService.createEventSubscriptionQuery()
+                .eventType("message")
+                .eventName(messageName)
+                .tenantId(tenantId)
+                .list();
+        if (subscriptions.isEmpty()) {
+            throw new JeecgBootException("当前租户没有可用的消息启动事件：" + messageName);
+        }
+        Map<String, Object> variables = sanitizedVariables(request.getVariables());
+        variables.put(WorkflowProcessConstants.VARIABLE_STATUS, WorkflowProcessConstants.STATUS_RUNNING);
+        Map<String, List<String>> startAssignees = normalizeAssignees(request.getStartUserSelectAssignees());
+        if (!startAssignees.isEmpty()) {
+            variables.put(START_USER_SELECT_ASSIGNEES, startAssignees);
+        }
+        variables.put("_workflowTenantId", tenantId);
+        variables.put("_workflowStartUserId", identityAdapter.currentUserId());
+        variables.put(WorkflowProcessConstants.PROCESS_INSTANCE_SKIP_EXPRESSION_ENABLED, true);
+        EventSubscription definitionSubscription = subscriptions.stream()
+                .filter(item -> item.getProcessDefinitionId() != null)
+                .findFirst().orElse(null);
+        if (definitionSubscription != null) {
+            ProcessDefinition definition = repositoryService.createProcessDefinitionQuery()
+                    .processDefinitionId(definitionSubscription.getProcessDefinitionId())
+                    .singleResult();
+            if (definition != null) {
+                BpmnModel bpmnModel = repositoryService.getBpmnModel(definition.getId());
+                validateStartUserSelections(bpmnModel, startAssignees, variables);
+                initializeMultiInstanceVariables(bpmnModel, definition.getId(),
+                        variables, identityAdapter.currentUserId());
+            }
+        }
+        String processInstanceId = UUID.randomUUID().toString();
+        String businessKey = normalize(request.getBusinessKey());
+        if (businessKey == null) {
+            businessKey = processInstanceId;
+        }
+        String instanceName = normalize(request.getProcessInstanceName());
+        if (instanceName == null) {
+            instanceName = messageName;
+        }
+        Authentication.setAuthenticatedUserId(identityAdapter.currentUserId());
+        try {
+            ProcessInstance instance = runtimeService.createProcessInstanceBuilder()
+                    .messageName(messageName)
+                    .tenantId(tenantId)
+                    .predefineProcessInstanceId(processInstanceId)
+                    .businessKey(businessKey)
+                    .name(instanceName)
+                    .variables(variables)
+                    .start();
             return instance.getId();
         } finally {
             Authentication.setAuthenticatedUserId(null);
@@ -408,12 +484,114 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             Map<String, Object> variables = historicVariables(processInstanceId);
             variables.putAll(approvalVariables(request));
             vo.setActivityNodes(buildActivityNodes(bpmnModel, instance, variables));
+            vo.setTimelineEvents(buildTimelineEvents(processInstanceId));
             if (vo.getTodoTask() != null && vo.getTodoTask().getTaskDefinitionKey() != null) {
                 applyOperationSettings(vo, vo.getTodoTask().getTaskDefinitionKey(), bpmnModel);
             }
         }
         vo.setBpmnModelView(getBpmnModelView(processInstanceId));
         return vo;
+    }
+
+    /**
+     * 保留 Flowable 历史活动中的非用户任务节点，补充审批节点时间线无法表达的运行状态。
+     */
+    private List<WorkflowTimelineEventVO> buildTimelineEvents(String processInstanceId) {
+        Set<String> processInstanceIds = new LinkedHashSet<>();
+        collectDescendantProcessInstances(processInstanceId, processInstanceIds);
+        return processInstanceIds.stream()
+                .flatMap(id -> historyService.createHistoricActivityInstanceQuery()
+                        .processInstanceId(id).list().stream())
+                // 主流程的用户任务仍由任务列表展示；子流程用户任务需要进入统一时间线，
+                // 否则调用活动内部的审批过程在详情页不可见。
+                .filter(activity -> !Objects.equals(processInstanceId, activity.getProcessInstanceId())
+                        || !"userTask".equalsIgnoreCase(activity.getActivityType()))
+                .sorted(Comparator.comparing(HistoricActivityInstance::getStartTime,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(this::toTimelineEvent)
+                .toList();
+    }
+
+    /** Includes call-activity descendants so subprocess events appear in the parent timeline. */
+    private void collectDescendantProcessInstances(String processInstanceId, Set<String> processInstanceIds) {
+        if (processInstanceId == null || !processInstanceIds.add(processInstanceId)) {
+            return;
+        }
+        historyService.createHistoricProcessInstanceQuery()
+                .superProcessInstanceId(processInstanceId)
+                .list()
+                .forEach(child -> collectDescendantProcessInstances(child.getId(), processInstanceIds));
+    }
+
+    private WorkflowTimelineEventVO toTimelineEvent(HistoricActivityInstance activity) {
+        WorkflowTimelineEventVO event = new WorkflowTimelineEventVO();
+        event.setId(activity.getId());
+        event.setActivityId(activity.getActivityId());
+        event.setName(activity.getActivityName() == null || activity.getActivityName().isBlank()
+                ? activity.getActivityId() : activity.getActivityName());
+        event.setType(activityTypeText(activity.getActivityType()));
+        event.setExecutionId(activity.getExecutionId());
+        event.setProcessInstanceId(activity.getProcessInstanceId());
+        event.setStartTime(activity.getStartTime());
+        event.setEndTime(activity.getEndTime());
+        event.setDurationInMillis(activity.getDurationInMillis());
+        String deleteReason = activity.getDeleteReason();
+        event.setStatus(activity.getEndTime() == null
+                ? WorkflowProcessConstants.STATUS_RUNNING
+                : (deleteReason == null || deleteReason.isBlank()
+                ? WorkflowProcessConstants.STATUS_APPROVED : WorkflowProcessConstants.STATUS_CANCELED));
+        if ("userTask".equalsIgnoreCase(activity.getActivityType()) && activity.getTaskId() != null) {
+            enrichUserTaskTimelineEvent(event, activity.getTaskId());
+        }
+        return event;
+    }
+
+    private void enrichUserTaskTimelineEvent(WorkflowTimelineEventVO event, String taskId) {
+        HistoricTaskInstance task = historyService.createHistoricTaskInstanceQuery()
+                .taskId(taskId)
+                .includeTaskLocalVariables()
+                .singleResult();
+        if (task == null) {
+            return;
+        }
+        event.setTaskId(task.getId());
+        event.setAssignee(task.getAssignee());
+        event.setAssigneeName(resolveUserName(task.getAssignee()));
+        Map<String, Object> localVariables = task.getTaskLocalVariables();
+        Object resultStatus = localVariables == null ? null : localVariables.get(TASK_RESULT_STATUS);
+        if (resultStatus instanceof Number number) {
+            event.setResultStatus(number.intValue());
+            event.setStatus(number.intValue());
+        }
+        Object reason = localVariables == null ? null : localVariables.get(TASK_REASON);
+        if (reason != null) {
+            event.setReason(String.valueOf(reason));
+        } else if (task.getDeleteReason() != null) {
+            event.setReason(task.getDeleteReason());
+        }
+    }
+
+    private String activityTypeText(String activityType) {
+        if (activityType == null || activityType.isBlank()) {
+            return "流程活动";
+        }
+        return switch (activityType) {
+            case "startEvent" -> "开始事件";
+            case "endEvent" -> "结束事件";
+            case "exclusiveGateway" -> "条件分支";
+            case "parallelGateway" -> "并行分支";
+            case "inclusiveGateway" -> "包容分支";
+            case "complexGateway" -> "复杂分支";
+            case "subProcess" -> "子流程";
+            case "callActivity" -> "调用活动";
+            case "serviceTask" -> "服务任务";
+            case "sendTask" -> "发送任务";
+            case "receiveTask" -> "接收任务";
+            case "boundaryEvent" -> "边界事件";
+            case "intermediateCatchEvent" -> "中间捕获事件";
+            case "intermediateThrowEvent" -> "中间抛出事件";
+            default -> activityType;
+        };
     }
 
     private WorkflowApprovalDetailVO getApprovalPreview(WorkflowApprovalDetailRequest request) {
@@ -447,8 +625,11 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         vo.setTasks(Collections.emptyList());
         vo.setProcessDefinition(toDefinition(definition, null));
         List<WorkflowActivityNodeVO> activityNodes = new ArrayList<>();
-        activityNodes.add(simpleActivityNode("StartUserNode", "发起人", 10, -1));
-        activityNodes.addAll(bpmnNavigator.reachableUserTasks(startEvent, bpmnModel, variables).stream()
+        List<UserTask> reachableUserTasks = bpmnNavigator.reachableUserTasks(startEvent, bpmnModel, variables);
+        if (reachableUserTasks.stream().noneMatch(node -> "StartUserNode".equals(node.getId()))) {
+            activityNodes.add(simpleActivityNode("StartUserNode", "发起人", 10, -1));
+        }
+        activityNodes.addAll(reachableUserTasks.stream()
                 .map(node -> toActivityNode(node, identityAdapter.currentUserId(), variables,
                         bpmnNavigator.skipExpressionMatches(node, variables)
                                 ? WorkflowProcessConstants.TASK_STATUS_SKIPPED
@@ -476,13 +657,14 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         }
 
         List<WorkflowActivityNodeVO> result = new ArrayList<>();
-        WorkflowActivityNodeVO startNode = simpleActivityNode("StartUserNode", "发起人", 10, 2);
-        startNode.setStartTime(instance.getStartTime());
-        startNode.setEndTime(instance.getStartTime());
-        result.add(startNode);
-
-        Set<String> mappedTaskKeys = new LinkedHashSet<>();
         List<UserTask> reachableUserTasks = bpmnNavigator.reachableUserTasks(startEvent, bpmnModel, variables);
+        if (reachableUserTasks.stream().noneMatch(node -> "StartUserNode".equals(node.getId()))) {
+            WorkflowActivityNodeVO startNode = simpleActivityNode("StartUserNode", "发起人", 10, 2);
+            startNode.setStartTime(instance.getStartTime());
+            startNode.setEndTime(instance.getStartTime());
+            result.add(startNode);
+        }
+        Set<String> mappedTaskKeys = new LinkedHashSet<>();
         boolean rejectedEnd = containsRejectedTask(instance.getTasks());
         for (int index = 0; index < reachableUserTasks.size(); index++) {
             UserTask userTask = reachableUserTasks.get(index);
@@ -498,6 +680,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             }
             WorkflowActivityNodeVO node = toActivityNode(userTask, instance.getStartUserId(), variables, status);
             applyActivityTasks(node, tasks);
+            applyMultiInstanceProgress(node, userTask, tasks, instance.getId());
             result.add(node);
             mappedTaskKeys.add(userTask.getId());
         }
@@ -549,6 +732,59 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
                 .min(Date::compareTo).orElse(null));
         node.setEndTime(tasks.stream().map(WorkflowTaskVO::getEndTime).filter(Objects::nonNull)
                 .max(Date::compareTo).orElse(null));
+    }
+
+    /**
+     * 将 Flowable 多实例执行器的计数暴露给流程详情，避免会签/或签只显示成一个普通审批节点。
+     * 活动中的计数优先读取运行时变量；节点已结束时则使用历史任务实例做兼容回退。
+     */
+    private void applyMultiInstanceProgress(WorkflowActivityNodeVO node, UserTask userTask,
+                                             List<WorkflowTaskVO> tasks, String processInstanceId) {
+        if (userTask == null || userTask.getLoopCharacteristics() == null) {
+            node.setMultiInstance(false);
+            return;
+        }
+        node.setMultiInstance(true);
+        int total = 0;
+        int completed = 0;
+        int active = 0;
+        List<Execution> executions = runtimeService.createExecutionQuery()
+                .processInstanceId(processInstanceId)
+                .activityId(userTask.getId())
+                .list();
+        for (Execution execution : executions) {
+            Map<String, Object> variables = runtimeService.getVariables(execution.getId());
+            total = Math.max(total, integerVariable(variables, "nrOfInstances"));
+            completed = Math.max(completed, integerVariable(variables, "nrOfCompletedInstances"));
+            active = Math.max(active, integerVariable(variables, "nrOfActiveInstances"));
+        }
+        if (total == 0 && tasks != null) {
+            total = tasks.size();
+            completed = (int) tasks.stream().filter(task -> task.getEndTime() != null).count();
+            active = (int) tasks.stream().filter(task -> task.getEndTime() == null).count();
+        }
+        if (total > 0 && completed + active > total) {
+            active = Math.max(0, total - completed);
+        }
+        node.setInstanceCount(total);
+        node.setCompletedInstanceCount(completed);
+        node.setActiveInstanceCount(active);
+        node.setCompletionPercent(total == 0 ? 0 : Math.min(100, completed * 100 / total));
+    }
+
+    private int integerVariable(Map<String, Object> variables, String name) {
+        Object value = variables == null ? null : variables.get(name);
+        if (value instanceof Number number) {
+            return Math.max(0, number.intValue());
+        }
+        if (value == null) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(String.valueOf(value)));
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
     }
 
     private boolean containsRejectedTask(List<WorkflowTaskVO> tasks) {
@@ -621,10 +857,46 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
     @Override
     public WorkflowPrintDataVO getPrintData(String processInstanceId) {
         WorkflowPrintDataVO vo = new WorkflowPrintDataVO();
-        vo.setPrintTemplateEnable(false);
-        vo.setProcessInstance(getProcessInstance(processInstanceId));
+        WorkflowInstanceVO instance = getProcessInstance(processInstanceId);
+        instance.setStartUserDeptName(resolveUserDeptNames(instance.getStartUserId()));
+        vo.setProcessInstance(instance);
         vo.setTasks(taskList(processInstanceId));
+        Map<String, Object> printTemplateSetting = resolvePrintTemplateSetting(instance.getProcessDefinitionId());
+        String printTemplate = printTemplateSetting == null ? null : normalize(stringValue(printTemplateSetting.get("template")));
+        // 模板开启但内容为空时退回内置打印布局，避免打印出空白页面
+        boolean printTemplateEnable = printTemplateSetting != null
+                && isTruthy(printTemplateSetting.get("enable"))
+                && printTemplate != null;
+        vo.setPrintTemplateEnable(printTemplateEnable);
+        if (printTemplateEnable) {
+            vo.setPrintTemplateHtml(printTemplate);
+        }
         return vo;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private Map<String, Object> resolvePrintTemplateSetting(String processDefinitionId) {
+        if (!hasText(processDefinitionId)) {
+            return null;
+        }
+        ProcessDefinition definition = repositoryService.createProcessDefinitionQuery()
+                .processDefinitionId(processDefinitionId)
+                .singleResult();
+        if (definition == null) {
+            return null;
+        }
+        WorkflowModelVO model = modelService.getByDeploymentId(definition.getDeploymentId());
+        return model == null ? null : model.getPrintTemplateSetting();
+    }
+
+    private boolean isTruthy(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return value != null && "true".equalsIgnoreCase(String.valueOf(value).trim());
     }
 
     @Override
@@ -650,15 +922,38 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
                 .active()
                 .list();
         for (Task activeTask : activeTasks) {
-            taskService.setVariableLocal(activeTask.getId(), TASK_RESULT_STATUS,
-                    WorkflowProcessConstants.STATUS_CANCELED);
-            taskService.setVariableLocal(activeTask.getId(), TASK_REASON, reason);
+            // Flowable 的 active 查询表示未完成任务，仍可能包含已挂起任务。
+            // 挂起任务不能写任务变量，取消流程时直接让引擎删除即可。
+            if (activeTask.isSuspended()) {
+                continue;
+            }
+            try {
+                taskService.setVariableLocal(activeTask.getId(), TASK_RESULT_STATUS,
+                        WorkflowProcessConstants.STATUS_CANCELED);
+                taskService.setVariableLocal(activeTask.getId(), TASK_REASON, reason);
+            } catch (FlowableException exception) {
+                // 查询任务与写入变量之间可能被并发挂起/删除；取消流程不应因展示变量
+                // 写入竞态失败，交由后续 deleteProcessInstance 完成引擎清理。
+                if (!isSuspendedTaskError(exception)) {
+                    throw exception;
+                }
+            }
         }
         taskService.addComment(null, request.getId(), "cancel", reason);
         runtimeService.setVariable(request.getId(), WorkflowProcessConstants.VARIABLE_STATUS,
                 WorkflowProcessConstants.STATUS_CANCELED);
         runtimeService.setVariable(request.getId(), WorkflowProcessConstants.VARIABLE_REASON, reason);
-        runtimeService.deleteProcessInstance(request.getId(), reason);
+        WorkflowProcessCleanupContext.enter();
+        try {
+            runtimeService.deleteProcessInstance(request.getId(), reason);
+        } finally {
+            WorkflowProcessCleanupContext.exit();
+        }
+    }
+
+    private boolean isSuspendedTaskError(FlowableException exception) {
+        String message = exception.getMessage();
+        return message != null && message.toLowerCase(java.util.Locale.ROOT).contains("suspended task");
     }
 
     @Override
@@ -743,9 +1038,43 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void skipTask(WorkflowTaskActionRequest request) {
+        Task task = requireMyTodo(request.getId());
+        requireButtonEnabled(task, 8);
+        if (taskResultStatus(task) == WorkflowProcessConstants.TASK_STATUS_APPROVING) {
+            throw new JeecgBootException("后加签任务正在审批中，请等待全部加签任务完成");
+        }
+        String reason = request.getReason() == null ? "" : request.getReason().trim();
+        if (reason.isBlank()) {
+            throw new JeecgBootException("跳过任务必须填写原因");
+        }
+        persistTaskResult(task, WorkflowProcessConstants.TASK_STATUS_SKIPPED, reason,
+                request.getSignPicUrl(), request.getAttachments());
+        taskService.addComment(task.getId(), task.getProcessInstanceId(), "skip", reason);
+        if (task.getParentTaskId() != null) {
+            taskService.complete(task.getId());
+            restoreSignParentIfReady(task.getParentTaskId());
+            return;
+        }
+        if (!activeChildTasks(task.getId()).isEmpty()) {
+            throw new JeecgBootException("请先完成当前任务的全部加签任务");
+        }
+        if (task.getAssignee() == null) {
+            taskService.claim(task.getId(), identityAdapter.currentUserId());
+        }
+        Map<String, Object> variables = completionVariables(task, request, true);
+        if (task.getDelegationState() == DelegationState.PENDING) {
+            taskService.resolveTask(task.getId(), variables);
+        } else {
+            taskService.complete(task.getId(), variables);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void completeAutomatically(String taskId, boolean approved, String reason) {
         Task task = taskService.createTaskQuery().taskId(taskId).active().singleResult();
-        if (task == null) {
+        if (task == null || task.isSuspended()) {
             return;
         }
         WorkflowTaskActionRequest request = new WorkflowTaskActionRequest();
@@ -779,6 +1108,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
     @Transactional(rollbackFor = Exception.class)
     public void returnTask(WorkflowTaskReturnRequest request) {
         Task task = requireMyTodo(request.getId());
+        requireButtonEnabled(task, 6);
         if (task.getParentTaskId() != null) {
             throw new JeecgBootException("加签子任务不能执行退回");
         }
@@ -794,6 +1124,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
     @Transactional(rollbackFor = Exception.class)
     public void delegateTask(WorkflowTaskDelegateRequest request) {
         Task task = requireMyTodo(request.getId());
+        requireButtonEnabled(task, 4);
         validateUser(request.getDelegateUserId());
         String currentUserId = identityAdapter.currentUserId();
         if (task.getAssignee() == null) {
@@ -810,6 +1141,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
     @Transactional(rollbackFor = Exception.class)
     public void transferTask(WorkflowTaskTransferRequest request) {
         Task task = requireMyTodo(request.getId());
+        requireButtonEnabled(task, 3);
         validateUser(request.getAssigneeUserId());
         String currentUserId = identityAdapter.currentUserId();
         if (task.getOwner() == null) {
@@ -823,6 +1155,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
     @Transactional(rollbackFor = Exception.class)
     public void createSignTask(WorkflowTaskSignCreateRequest request) {
         Task parent = requireMyTodoOrSignOwner(request.getId());
+        requireButtonEnabled(parent, 5);
         String currentSignType = signType(parent);
         if (currentSignType != null && !Objects.equals(currentSignType, request.getType())) {
             throw new JeecgBootException("当前任务已存在" + signTypeName(currentSignType) + "，不能同时使用" + signTypeName(request.getType()));
@@ -965,7 +1298,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
                     .filter(Objects::nonNull).distinct().toList();
         }
         for (Task activeTask : activeTasks) {
-            if (activityIds.contains(activeTask.getTaskDefinitionKey())) {
+            if (activityIds.contains(activeTask.getTaskDefinitionKey()) && !activeTask.isSuspended()) {
                 taskService.setVariableLocal(activeTask.getId(), TASK_RESULT_STATUS,
                         WorkflowProcessConstants.STATUS_CANCELED);
                 taskService.setVariableLocal(activeTask.getId(), TASK_REASON, "前一节点撤回");
@@ -985,14 +1318,87 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
                 || taskDefineKey == null || taskDefineKey.isBlank()) {
             throw new JeecgBootException("回调参数不能为空");
         }
+        String normalizedProcessInstanceId = processInstanceId.trim();
+        ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(normalizedProcessInstanceId)
+                .processInstanceTenantId(identityAdapter.currentTenantId())
+                .singleResult();
+        if (instance == null) {
+            throw new JeecgBootException("流程实例不存在、已结束或无权访问");
+        }
+        String normalizedTaskDefineKey = taskDefineKey.trim();
         Execution execution = runtimeService.createExecutionQuery()
-                .processInstanceId(processInstanceId)
-                .activityId(taskDefineKey)
+                .processInstanceId(normalizedProcessInstanceId)
+                .activityId(normalizedTaskDefineKey)
                 .singleResult();
         if (execution == null) {
             throw new JeecgBootException("流程回调等待节点不存在或已被触发");
         }
         runtimeService.trigger(execution.getId());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int triggerEvent(WorkflowEventTriggerRequest request) {
+        String processInstanceId = normalize(request.getProcessInstanceId());
+        String eventType = normalize(request.getEventType());
+        String eventName = normalize(request.getEventName());
+        if (eventType == null || eventName == null) {
+            throw new JeecgBootException("事件触发参数不能为空");
+        }
+        String normalizedType = eventType.toLowerCase(java.util.Locale.ROOT);
+        if (!"message".equals(normalizedType) && !"signal".equals(normalizedType)) {
+            throw new JeecgBootException("仅支持 message 或 signal 事件");
+        }
+        String tenantId = identityAdapter.currentTenantId();
+        if ("message".equals(normalizedType) && processInstanceId == null) {
+            throw new JeecgBootException("消息事件必须指定流程实例");
+        }
+        if (processInstanceId != null) {
+            ProcessInstance instance = runtimeService.createProcessInstanceQuery()
+                    .processInstanceId(processInstanceId)
+                    .processInstanceTenantId(tenantId)
+                    .singleResult();
+            if (instance == null) {
+                throw new JeecgBootException("流程实例不存在、已结束或无权访问");
+            }
+        }
+        Map<String, Object> variables = sanitizedVariables(request.getVariables());
+        var subscriptionQuery = runtimeService.createEventSubscriptionQuery()
+                .eventType(normalizedType)
+                .eventName(eventName)
+                .tenantId(tenantId);
+        if (processInstanceId != null) {
+            subscriptionQuery.processInstanceId(processInstanceId);
+        }
+        List<EventSubscription> subscriptions = subscriptionQuery.list();
+        if (subscriptions.isEmpty()) {
+            throw new JeecgBootException("流程实例没有等待该事件：" + eventName);
+        }
+        if ("signal".equals(normalizedType) && processInstanceId == null) {
+            // Signal is a broadcast event. The tenant-aware overload prevents a
+            // signal from crossing organization boundaries while waking every
+            // matching subscription in this tenant.
+            runtimeService.signalEventReceivedWithTenantId(eventName, variables, tenantId);
+            return subscriptions.size();
+        }
+        int triggered = 0;
+        for (EventSubscription subscription : subscriptions) {
+            String executionId = subscription.getExecutionId();
+            if (executionId == null || executionId.isBlank()) {
+                continue;
+            }
+            if ("message".equals(normalizedType)) {
+                runtimeService.messageEventReceived(eventName, executionId, variables);
+            } else {
+                runtimeService.signalEventReceived(eventName, executionId, variables);
+            }
+            triggered++;
+        }
+        if (triggered == 0) {
+            throw new JeecgBootException("流程实例没有可触发的事件订阅：" + eventName);
+        }
+        return triggered;
     }
 
     private void completeTask(WorkflowTaskActionRequest request, boolean approved) {
@@ -1008,6 +1414,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             throw new JeecgBootException("后加签任务正在审批中，请等待全部加签任务完成");
         }
         if (claimUnassignedTask) {
+            requireButtonEnabled(task, approved ? 1 : 2);
             validateNodeRules(task, request, approved);
         }
         if (approved && SIGN_TYPE_AFTER.equals(signType(task)) && !activeChildTasks(task.getId()).isEmpty()) {
@@ -1056,15 +1463,28 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         Map<String, Object> variables = sanitizedApprovalVariables(request.getVariables());
         filterNodeEditableVariables(task, variables);
         Map<String, List<String>> nextAssignees = normalizeAssignees(request.getNextAssignees());
-        if (!nextAssignees.isEmpty()) {
-            Map<String, List<String>> merged = assigneeMap(
-                    runtimeService.getVariable(task.getProcessInstanceId(), APPROVE_USER_SELECT_ASSIGNEES));
-            merged.putAll(nextAssignees);
-            variables.put(APPROVE_USER_SELECT_ASSIGNEES, merged);
-        }
+        Map<String, List<String>> startUserSelections = assigneeMap(
+                runtimeService.getVariable(task.getProcessInstanceId(), START_USER_SELECT_ASSIGNEES));
+        Map<String, List<String>> approveUserSelections = assigneeMap(
+                runtimeService.getVariable(task.getProcessInstanceId(), APPROVE_USER_SELECT_ASSIGNEES));
         Map<String, Object> evaluationVariables = new LinkedHashMap<>(runtimeService.getVariables(task.getProcessInstanceId()));
         evaluationVariables.putAll(variables);
-        initializeMultiInstanceVariables(repositoryService.getBpmnModel(task.getProcessDefinitionId()),
+        // 先把本次审批结果放入预测上下文，条件分支和下一节点候选人表达式才能看到
+        // Flowable 完成任务时即将写入的 approved 变量。
+        evaluationVariables.put(APPROVED_VARIABLE, approved);
+        BpmnModel bpmnModel = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+        applyNextUserSelections(task, bpmnModel, evaluationVariables, nextAssignees,
+                startUserSelections, approveUserSelections);
+        if (!startUserSelections.isEmpty()) {
+            variables.put(START_USER_SELECT_ASSIGNEES, startUserSelections);
+        }
+        if (!approveUserSelections.isEmpty()) {
+            variables.put(APPROVE_USER_SELECT_ASSIGNEES, approveUserSelections);
+        }
+        evaluationVariables.putAll(variables);
+        validateApproveUserSelections(task, bpmnModel, evaluationVariables,
+                startUserSelections, approveUserSelections);
+        initializeMultiInstanceVariables(bpmnModel,
                 task.getProcessDefinitionId(), evaluationVariables,
                 processStartUserId(task.getProcessInstanceId()), variables);
         variables.put(APPROVED_VARIABLE, approved);
@@ -1153,6 +1573,10 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             if (parentTask == null) {
                 return;
             }
+            if (parentTask.isSuspended()) {
+                parentTaskId = parentTask.getParentTaskId();
+                continue;
+            }
             taskService.setVariableLocal(parentTask.getId(), TASK_RESULT_STATUS,
                     WorkflowProcessConstants.STATUS_REJECTED);
             taskService.setVariableLocal(parentTask.getId(), TASK_REASON, reason);
@@ -1179,7 +1603,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
                 .includeTaskLocalVariables()
                 .list();
         for (Task activeTask : activeTasks) {
-            if (!Objects.equals(activeTask.getId(), task.getId())) {
+            if (!Objects.equals(activeTask.getId(), task.getId()) && !activeTask.isSuspended()) {
                 Object status = activeTask.getTaskLocalVariables() == null ? null
                         : activeTask.getTaskLocalVariables().get(TASK_RESULT_STATUS);
                 boolean finalStatus = status instanceof Number number
@@ -1277,7 +1701,8 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         taskService.setVariableLocal(task.getId(), TASK_REASON, reason);
         for (Task other : activeTasks) {
             if (!Objects.equals(other.getId(), task.getId())
-                    && returnTaskKeys.contains(other.getTaskDefinitionKey())) {
+                    && returnTaskKeys.contains(other.getTaskDefinitionKey())
+                    && !other.isSuspended()) {
                 taskService.setVariableLocal(other.getId(), TASK_RESULT_STATUS,
                         WorkflowProcessConstants.STATUS_CANCELED);
                 taskService.setVariableLocal(other.getId(), TASK_REASON, reason);
@@ -1321,7 +1746,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         String buttonsText = extensionValue(userTask, WorkflowProcessConstants.EXTENSION_ENABLED_BUTTONS);
         List<Integer> buttons = new ArrayList<>();
         if (buttonsText == null || buttonsText.isBlank()) {
-            buttons.addAll(List.of(1, 2, 3, 4, 5, 6, 7));
+            buttons.addAll(List.of(1, 2, 3, 4, 5, 6, 7, 8));
         } else {
             for (String value : buttonsText.split(",")) {
                 try {
@@ -1472,6 +1897,21 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         return task;
     }
 
+    /** 后端同步校验节点操作按钮，避免仅依赖前端隐藏按钮造成越权办理。 */
+    private void requireButtonEnabled(Task task, int buttonId) {
+        BpmnModel model = repositoryService.getBpmnModel(task.getProcessDefinitionId());
+        FlowElement element = model == null ? null : model.getFlowElement(task.getTaskDefinitionKey());
+        if (!(element instanceof UserTask userTask)) return;
+        String enabled = extensionValue(userTask, WorkflowProcessConstants.EXTENSION_ENABLED_BUTTONS);
+        if (enabled == null || enabled.isBlank()) return;
+        boolean allowed = Arrays.stream(enabled.split(","))
+                .map(String::trim)
+                .anyMatch(value -> String.valueOf(buttonId).equals(value));
+        if (!allowed) {
+            throw new JeecgBootException("当前节点未启用该操作");
+        }
+    }
+
     private void validateUser(String userId) {
         if (userId == null || userId.isBlank() || sysBaseApi.getUserById(userId) == null) {
             throw new JeecgBootException("用户不存在：" + userId);
@@ -1556,6 +1996,74 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             result.put(activityId.trim(), normalized);
         });
         return result;
+    }
+
+    private void validateStartUserSelections(BpmnModel bpmnModel, Map<String, List<String>> selections,
+                                             Map<String, Object> variables) {
+        if (bpmnModel == null || bpmnModel.getMainProcess() == null) {
+            return;
+        }
+        StartEvent startEvent = bpmnModel.getMainProcess().getFlowElements().stream()
+                .filter(StartEvent.class::isInstance).map(StartEvent.class::cast).findFirst().orElse(null);
+        if (startEvent == null) {
+            return;
+        }
+        for (UserTask task : bpmnNavigator.reachableUserTasks(startEvent, bpmnModel, variables)) {
+            if (Objects.equals(candidateStrategy(task), 35)
+                    && (selections == null || selections.get(task.getId()) == null
+                    || selections.get(task.getId()).isEmpty())) {
+                throw new JeecgBootException("发起人自选节点“" + task.getName() + "”必须选择审批人");
+            }
+        }
+    }
+
+    private void applyNextUserSelections(Task currentTask, BpmnModel bpmnModel,
+                                         Map<String, Object> variables,
+                                         Map<String, List<String>> requested,
+                                         Map<String, List<String>> startSelections,
+                                         Map<String, List<String>> approveSelections) {
+        if (currentTask == null || bpmnModel == null) {
+            return;
+        }
+        FlowElement currentElement = bpmnModel.getFlowElement(currentTask.getTaskDefinitionKey());
+        for (UserTask task : bpmnNavigator.nextUserTasks(currentElement, bpmnModel, variables)) {
+            Integer strategy = candidateStrategy(task);
+            if (!Objects.equals(strategy, 34) && !Objects.equals(strategy, 35)) {
+                continue;
+            }
+            Map<String, List<String>> target = Objects.equals(strategy, 35)
+                    ? startSelections : approveSelections;
+            if (target.get(task.getId()) != null && !target.get(task.getId()).isEmpty()) {
+                continue;
+            }
+            List<String> selected = requested == null ? null : requested.get(task.getId());
+            if (selected == null || selected.isEmpty()) {
+                throw new JeecgBootException((Objects.equals(strategy, 35) ? "发起人" : "审批人")
+                        + "自选节点“" + task.getName() + "”必须选择审批人");
+            }
+            target.put(task.getId(), selected);
+        }
+    }
+
+    private void validateApproveUserSelections(Task currentTask, BpmnModel bpmnModel,
+                                               Map<String, Object> variables,
+                                               Map<String, List<String>> startSelections,
+                                               Map<String, List<String>> approveSelections) {
+        if (currentTask == null || bpmnModel == null) {
+            return;
+        }
+        FlowElement currentElement = bpmnModel.getFlowElement(currentTask.getTaskDefinitionKey());
+        for (UserTask task : bpmnNavigator.nextUserTasks(currentElement, bpmnModel, variables)) {
+            Integer strategy = candidateStrategy(task);
+            Map<String, List<String>> selections = Objects.equals(strategy, 35)
+                    ? startSelections : approveSelections;
+            if ((Objects.equals(strategy, 34) || Objects.equals(strategy, 35))
+                    && (selections == null || selections.get(task.getId()) == null
+                    || selections.get(task.getId()).isEmpty())) {
+                throw new JeecgBootException((Objects.equals(strategy, 35) ? "发起人" : "审批人")
+                        + "自选节点“" + task.getName() + "”必须选择审批人");
+            }
+        }
     }
 
     private Map<String, List<String>> assigneeMap(Object value) {
@@ -1843,6 +2351,7 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             vo.setDeploymentTime(resolved.getDeploymentTime());
         }
         WorkflowModelVO model = modelService.getByDeploymentId(definition.getDeploymentId());
+        vo.setMessageStartNames(messageStartNames(definition.getId()));
         if (model != null) {
             vo.setCategoryName(model.getCategoryName());
             vo.setModelType(model.getType());
@@ -1869,6 +2378,36 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
             }
         }
         return vo;
+    }
+
+    private List<String> messageStartNames(String processDefinitionId) {
+        BpmnModel bpmnModel = repositoryService.getBpmnModel(processDefinitionId);
+        if (bpmnModel == null || bpmnModel.getMainProcess() == null) {
+            return Collections.emptyList();
+        }
+        List<String> names = new ArrayList<>();
+        for (FlowElement element : bpmnModel.getMainProcess().getFlowElements()) {
+            if (!(element instanceof StartEvent startEvent) || startEvent.getEventDefinitions() == null) {
+                continue;
+            }
+            startEvent.getEventDefinitions().stream()
+                    .filter(MessageEventDefinition.class::isInstance)
+                    .map(MessageEventDefinition.class::cast)
+                    .map(definition -> messageName(bpmnModel, definition))
+                    .filter(this::hasText)
+                    .filter(name -> !names.contains(name))
+                    .forEach(names::add);
+        }
+        return names;
+    }
+
+    private String messageName(BpmnModel bpmnModel, MessageEventDefinition definition) {
+        String messageRef = normalize(definition.getMessageRef());
+        if (messageRef == null) {
+            return normalize(definition.getMessageExpression());
+        }
+        Message message = bpmnModel.getMessage(messageRef);
+        return message == null ? messageRef : normalize(message.getName());
     }
 
     private boolean canCurrentUserStart(ProcessDefinition definition) {
@@ -1920,6 +2459,15 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         if (processVariables != null && processVariables.get(WorkflowProcessConstants.VARIABLE_REASON) != null) {
             vo.setReason(String.valueOf(processVariables.get(WorkflowProcessConstants.VARIABLE_REASON)));
         }
+        Map<String, Object> formVariables = new LinkedHashMap<>();
+        if (processVariables != null) {
+            processVariables.forEach((key, value) -> {
+                if (!isSystemVariable(key)) {
+                    formVariables.put(key, value);
+                }
+            });
+        }
+        vo.setFormVariables(formVariables);
         vo.setStatus(resolveProcessStatus(instance, resultStatus));
         vo.setCurrentTasks(taskService.createTaskQuery().processInstanceId(instance.getId()).active().list()
                 .stream().map(Task::getName).toList());
@@ -2059,6 +2607,22 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         return hasText(user.getRealname()) ? user.getRealname() : user.getUsername();
     }
 
+    /** 打印视图需要展示发起人所属部门；仅在打印数据接口中解析，避免列表查询产生额外开销。 */
+    private String resolveUserDeptNames(String userId) {
+        if (!hasText(userId)) {
+            return null;
+        }
+        LoginUser user = sysBaseApi.getUserById(userId);
+        if (user == null || !hasText(user.getUsername())) {
+            return null;
+        }
+        List<String> departNames = sysBaseApi.getDepartNamesByUsername(user.getUsername());
+        if (departNames == null || departNames.isEmpty()) {
+            return null;
+        }
+        return String.join("、", departNames);
+    }
+
     private String resolveProcessStatus(HistoricProcessInstance instance, Integer resultStatus) {
         if (resultStatus != null && resultStatus == WorkflowProcessConstants.STATUS_REJECTED) {
             return "REJECTED";
@@ -2086,15 +2650,25 @@ public class WorkflowEngineServiceImpl implements WorkflowEngineService {
         if (SecurityUtils.getSubject().isPermitted("bpm:process-instance:manager-query")) {
             return;
         }
-        long involved = historyService.createHistoricTaskInstanceQuery()
-                .processInstanceId(processInstanceId)
-                .taskTenantId(identityAdapter.currentTenantId())
-                .taskAssignee(userId).count();
-        long currentCandidate = myTodoQuery().processInstanceId(processInstanceId).count();
-        long currentOwner = taskService.createTaskQuery().active()
-                .processInstanceId(processInstanceId)
-                .taskTenantId(identityAdapter.currentTenantId())
-                .taskOwner(userId).count();
+        // 调用活动的子流程任务也属于当前流程详情的可见范围。仅查询父实例会导致
+        // 子流程办理人打开父流程时被错误判定为无权查看评论和时间线。
+        Set<String> relatedProcessInstanceIds = new LinkedHashSet<>();
+        collectDescendantProcessInstances(processInstanceId, relatedProcessInstanceIds);
+        long involved = relatedProcessInstanceIds.stream()
+                .mapToLong(relatedId -> historyService.createHistoricTaskInstanceQuery()
+                        .processInstanceId(relatedId)
+                        .taskTenantId(identityAdapter.currentTenantId())
+                        .taskAssignee(userId).count())
+                .sum();
+        long currentCandidate = relatedProcessInstanceIds.stream()
+                .mapToLong(relatedId -> myTodoQuery().processInstanceId(relatedId).count())
+                .sum();
+        long currentOwner = relatedProcessInstanceIds.stream()
+                .mapToLong(relatedId -> taskService.createTaskQuery().active()
+                        .processInstanceId(relatedId)
+                        .taskTenantId(identityAdapter.currentTenantId())
+                        .taskOwner(userId).count())
+                .sum();
         if (involved == 0 && currentCandidate == 0 && currentOwner == 0) {
             throw new JeecgBootException("无权查看该流程实例");
         }

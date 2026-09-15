@@ -3,6 +3,7 @@ package org.jeecg.modules.workflow.flowable;
 import org.flowable.bpmn.converter.BpmnXMLConverter;
 import org.flowable.bpmn.model.BpmnModel;
 import org.flowable.bpmn.model.ExclusiveGateway;
+import org.flowable.bpmn.model.MultiInstanceLoopCharacteristics;
 import org.flowable.bpmn.model.StartEvent;
 import org.flowable.bpmn.model.UserTask;
 import org.flowable.common.engine.impl.util.io.BytesStreamSource;
@@ -68,7 +69,7 @@ class WorkflowSimpleModelConverterTest {
         BpmnModel bpmnModel = parse(converter.convert("selectedApproval", "自选审批流程", approval));
         UserTask userTask = (UserTask) bpmnModel.getMainProcess().getFlowElement("SelectedApprove");
 
-        assertEquals("${PROCESS_START_USER_SELECT_ASSIGNEES['SelectedApprove'][0]}", userTask.getAssignee());
+        assertEquals("${workflowCandidateResolver.resolveOne(execution)}", userTask.getAssignee());
         assertEquals("35", userTask.getExtensionElements().get("candidateStrategy").get(0).getElementText());
         StartEvent startEvent = (StartEvent) bpmnModel.getMainProcess().getFlowElement("StartEvent_1");
         WorkflowBpmnNavigator navigator = new WorkflowBpmnNavigator(null);
@@ -76,6 +77,45 @@ class WorkflowSimpleModelConverterTest {
                 .map(UserTask::getId).toList());
         assertEquals(List.of("ManagerApprove", "SelectedApprove"), navigator.reachableUserTasks(startEvent, bpmnModel, Map.of()).stream()
                 .map(UserTask::getId).toList());
+    }
+
+    @Test
+    void keepsLegacyAssignEmptyCandidateStrategy() {
+        Map<String, Object> approval = Map.of(
+                "id", "EmptyApproval",
+                "name", "空审批人处理",
+                "type", 11,
+                "candidateStrategy", 1,
+                "assignEmptyHandler", Map.of("type", 3, "userIds", List.of("fallback-user")),
+                "childNode", Map.of("id", "EndNode", "name", "结束", "type", 1));
+
+        UserTask userTask = (UserTask) parse(converter.convert("legacyEmpty", "旧策略流程", approval))
+                .getMainProcess().getFlowElement("EmptyApproval");
+
+        assertEquals("1", userTask.getExtensionElements().get("candidateStrategy").get(0).getElementText());
+        assertEquals("${workflowCandidateResolver.resolveOne(execution)}", userTask.getAssignee());
+    }
+
+    @Test
+    void writesStableCandidateCollectionForOrSignMultiInstance() {
+        Map<String, Object> approval = Map.of(
+                "id", "OrSignApprove",
+                "name", "或签审批",
+                "type", 11,
+                "candidateStrategy", 30,
+                "candidateParam", List.of("user-1", "user-2"),
+                "approveMethod", 3,
+                "childNode", Map.of("id", "EndNode", "name", "结束", "type", 1));
+
+        UserTask userTask = (UserTask) parse(converter.convert("orSign", "或签流程", approval))
+                .getMainProcess().getFlowElement("OrSignApprove");
+        MultiInstanceLoopCharacteristics loop = userTask.getLoopCharacteristics();
+
+        assertNotNull(loop);
+        assertEquals("${_workflowTaskAssignees_OrSignApprove}", loop.getInputDataItem());
+        assertEquals("_workflowTaskAssignee_OrSignApprove", loop.getElementVariable());
+        assertEquals("${nrOfCompletedInstances > 0}", loop.getCompletionCondition());
+        assertEquals(false, loop.isSequential());
     }
 
     @Test

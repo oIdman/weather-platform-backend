@@ -8,6 +8,16 @@
       @click.stop="$emit('select', node)"
       @keydown.enter.stop="$emit('select', node)"
     >
+      <button
+        v-if="[11, 12, 13, 14, 15, 20, 51, 52, 53, 54].includes(node.type)"
+        class="node-delete"
+        type="button"
+        aria-label="删除节点"
+        title="删除节点"
+        @click.stop="$emit('delete', node)"
+      >
+        ×
+      </button>
       <div class="node-title">
         <span>{{ node.name || nodeTypeName(node.type) }}</span>
         <a-tag :color="nodeTypeColor(node.type)">{{ nodeTypeName(node.type) }}</a-tag>
@@ -21,12 +31,26 @@
           {{ branch.name || `分支 ${index + 1}` }}
         </button>
         <SimpleNodeAdd @add="$emit('add', branch, $event)" />
-        <SimpleProcessTree v-if="branch.childNode" :node="branch.childNode" :selected-id="selectedId" @select="$emit('select', $event)" @add="(target, type) => $emit('add', target, type)" />
+        <SimpleProcessTree
+          v-if="branch.childNode"
+          :node="branch.childNode"
+          :selected-id="selectedId"
+          @select="$emit('select', $event)"
+          @add="(target, type) => $emit('add', target, type)"
+          @delete="$emit('delete', $event)"
+        />
       </div>
     </div>
 
     <SimpleNodeAdd v-if="node.type !== 1" @add="$emit('add', node, $event)" />
-    <SimpleProcessTree v-if="node.childNode" :node="node.childNode" :selected-id="selectedId" @select="$emit('select', $event)" @add="(target, type) => $emit('add', target, type)" />
+    <SimpleProcessTree
+      v-if="node.childNode"
+      :node="node.childNode"
+      :selected-id="selectedId"
+      @select="$emit('select', $event)"
+      @add="(target, type) => $emit('add', target, type)"
+      @delete="$emit('delete', $event)"
+    />
   </div>
 </template>
 
@@ -41,7 +65,7 @@
     selectedId: { type: String, default: '' },
   });
 
-  defineEmits<{ select: [node: SimpleNode]; add: [node: SimpleNode, type: number] }>();
+  defineEmits<{ select: [node: SimpleNode]; add: [node: SimpleNode, type: number]; delete: [node: SimpleNode] }>();
 
   const typeNames: Record<number, string> = {
     0: '开始',
@@ -103,6 +127,7 @@
   }
 
   .node-card {
+    position: relative;
     width: 260px;
     padding: 12px 14px;
     border: 2px solid transparent;
@@ -115,6 +140,48 @@
       border-color: #1677ff;
       box-shadow: 0 0 0 3px rgb(22 119 255 / 12%);
     }
+  }
+
+  .node-delete {
+    position: absolute;
+    z-index: 1;
+    top: -11px;
+      right: -11px;
+    display: grid;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    place-items: center;
+    border: 1px solid #1677ff;
+    border-radius: 50%;
+    background: #fff;
+    color: #1677ff;
+    cursor: pointer;
+    font-size: 0;
+    opacity: 1;
+  }
+
+  .node-delete::before,
+  .node-delete::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 10px;
+    height: 1.5px;
+    border-radius: 2px;
+    background: currentColor;
+    content: '';
+    transform: translate(-50%, -50%) rotate(45deg);
+  }
+
+  .node-delete::after {
+    transform: translate(-50%, -50%) rotate(-45deg);
+  }
+
+  .node-delete:hover {
+    border-color: #ff4d4f;
+    background: #fff1f0;
+    color: #ff4d4f;
   }
 
   .node-title {

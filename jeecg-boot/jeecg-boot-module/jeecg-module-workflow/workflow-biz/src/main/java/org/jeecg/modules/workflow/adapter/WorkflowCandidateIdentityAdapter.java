@@ -1,6 +1,7 @@
 package org.jeecg.modules.workflow.adapter;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -19,6 +20,11 @@ public interface WorkflowCandidateIdentityAdapter {
     Collection<String> leaderUserIdsByDepartmentId(String departmentId);
 
     Collection<String> userIdsByPositionIds(List<String> positionIds);
+
+    /** Optional user-group lookup for portable workflow deployments. */
+    default Collection<String> userIdsByGroupIds(List<String> groupIds) {
+        return Collections.emptyList();
+    }
 
     List<String> departmentIdsByUserId(String userId);
 

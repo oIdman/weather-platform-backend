@@ -11,6 +11,7 @@ import org.jeecg.modules.workflow.api.dto.WorkflowApprovalDetailRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowPage;
 import org.jeecg.modules.workflow.api.dto.WorkflowProcessInstancePageRequest;
 import org.jeecg.modules.workflow.api.dto.WorkflowStartRequest;
+import org.jeecg.modules.workflow.api.dto.WorkflowStartEventRequest;
 import org.jeecg.modules.workflow.api.vo.WorkflowInstanceVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowActivityNodeVO;
 import org.jeecg.modules.workflow.api.vo.WorkflowApprovalDetailVO;
@@ -19,6 +20,7 @@ import org.jeecg.modules.workflow.api.vo.WorkflowPrintDataVO;
 import org.jeecg.modules.workflow.service.WorkflowEngineService;
 import org.jeecg.modules.workflow.service.WorkflowProcessCopyService;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -69,7 +71,11 @@ public class WorkflowProcessInstanceController {
     @RequiresPermissions(value = {"bpm:process-instance:query", "bpm:process-instance:manager-query", "workflow:process:list", "workflow:process:manager"}, logical = Logical.OR)
     @GetMapping("/get-approval-detail")
     public Result<WorkflowApprovalDetailVO> approvalDetail(@Valid WorkflowApprovalDetailRequest request) {
-        return Result.ok(workflowService.getApprovalDetail(request));
+        WorkflowApprovalDetailVO detail = workflowService.getApprovalDetail(request);
+        if (StringUtils.hasText(request.getProcessInstanceId())) {
+            detail.setCopies(copyService.listByProcessInstanceId(request.getProcessInstanceId()));
+        }
+        return Result.ok(detail);
     }
 
     @Operation(summary = "查询当前任务的下一审批节点")
@@ -99,6 +105,13 @@ public class WorkflowProcessInstanceController {
     @PostMapping("/create")
     public Result<String> create(@Valid @RequestBody WorkflowStartRequest request) {
         return Result.OK("流程发起成功", workflowService.start(request));
+    }
+
+    @Operation(summary = "通过消息启动事件发起流程")
+    @RequiresPermissions(value = {"bpm:process-instance:create", "workflow:process:start"}, logical = Logical.OR)
+    @PostMapping("/start-by-message")
+    public Result<String> startByMessage(@Valid @RequestBody WorkflowStartEventRequest request) {
+        return Result.OK("消息启动流程成功", workflowService.startByMessageEvent(request));
     }
 
     @Operation(summary = "发起人取消流程")
